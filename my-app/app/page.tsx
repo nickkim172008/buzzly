@@ -11,6 +11,7 @@ import {
   onSnapshot,
   orderBy,
   query,
+  runTransaction,
   serverTimestamp,
   setDoc,
   updateDoc,
@@ -25,6 +26,7 @@ type OrderStatus = "open" | "filled" | "partially_filled";
 type AppTab = "markets" | "suggest" | "survey" | "create" | "drop" | "trading" | "portfolio" | "account";
 type ChartRange = "1D" | "1W" | "1M" | "3M" | "6M" | "YTD" | "1Y" | "ALL";
 type ChartMode = "value" | "returns";
+type UserRole = "admin" | "user";
 
 type Asset = {
   id: string;
@@ -41,8 +43,12 @@ type Asset = {
   color: string;
   totalSupply: number;
   dropPrice: number;
+  soldDropSupply: number;
+  unsoldDropSupply: number;
+  activeTradableSupply: number;
   remainingDropSupply: number;
   status: MarketStatus;
+  source: "manual" | "scheduled_drop";
   createdAt: number;
 };
 
@@ -171,6 +177,7 @@ const levelCopy: Record<
 };
 
 const STARTING_COINS = 0;
+const ADMIN_EMAIL = "nutakkiabhiram@gmail.com";
 const DROP_PURCHASE_LIMIT_PERCENT = 0.05;
 const DROP_BATCH_SIZE = 3;
 const DROP_CYCLE_MS = 60 * 1000;
@@ -179,7 +186,7 @@ const chartRanges: ChartRange[] = ["1D", "1W", "1M", "3M", "6M", "YTD", "1Y", "A
 const tabs: { id: AppTab; label: string; mark: string }[] = [
   { id: "markets", label: "Markets", mark: "M" },
   { id: "suggest", label: "Suggest", mark: "S" },
-  { id: "survey", label: "Survey", mark: "V" },
+  { id: "survey", label: "Vote", mark: "V" },
   { id: "create", label: "Create", mark: "+" },
   { id: "drop", label: "Drop", mark: "D" },
   { id: "trading", label: "Trade", mark: "T" },
@@ -692,25 +699,29 @@ function DropTimerBadge({
 function DropTimingCard({
   drop,
   now,
+  canRemove,
   onRemove,
 }: {
   drop: UpcomingDrop;
   now: number;
+  canRemove: boolean;
   onRemove: () => void;
 }) {
   const remainingMs = drop.releaseAt - now;
 
   return (
     <div className="group relative rounded-[2rem] border border-border bg-surface p-5 text-left shadow-card transition hover:-translate-y-0.5 hover:border-brand hover:shadow-lift">
-      <button
-        type="button"
-        onClick={onRemove}
-        className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full border border-border bg-surface text-sm font-black text-muted opacity-0 shadow-card transition hover:border-danger hover:text-danger group-hover:opacity-100"
-        aria-label={`Remove ${drop.title} from this drop cycle`}
-        title="Remove from this drop cycle"
-      >
-        X
-      </button>
+      {canRemove ? (
+        <button
+          type="button"
+          onClick={onRemove}
+          className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full border border-border bg-surface text-sm font-black text-muted opacity-0 shadow-card transition hover:border-danger hover:text-danger group-hover:opacity-100"
+          aria-label={`Remove ${drop.title} from this drop cycle`}
+          title="Remove from this drop cycle"
+        >
+          X
+        </button>
+      ) : null}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2 pr-9">
@@ -793,6 +804,10 @@ function applyTradeToHolding(holding: Holding | undefined, quantity: number, pri
 
 function userLabel(user: User) {
   return user.displayName?.trim() || user.email?.split("@")[0] || "You";
+}
+
+function userRole(user: User | null): UserRole {
+  return user?.email?.toLowerCase() === ADMIN_EMAIL ? "admin" : "user";
 }
 
 function AuthScreen({
@@ -881,6 +896,9 @@ export default function Home() {
   const [suggestionCategory, setSuggestionCategory] = useState("Event");
   const [suggestionReason, setSuggestionReason] = useState("");
   const [surveySearch, setSurveySearch] = useState("");
+  const [marketSearch, setMarketSearch] = useState("");
+  const [dropSearch, setDropSearch] = useState("");
+  const [tradeSearch, setTradeSearch] = useState("");
   const [dropQuantity, setDropQuantity] = useState(1);
   const [activeTab, setActiveTab] = useState<AppTab>("markets");
   const [chartRange, setChartRange] = useState<ChartRange>("1M");
@@ -890,6 +908,11 @@ export default function Home() {
   const [skippedDropSuggestionIds, setSkippedDropSuggestionIds] = useState<string[]>([]);
   const [processingDropCycle, setProcessingDropCycle] = useState(false);
   const accountName = authUser ? userLabel(authUser) : "You";
+  const currentUser = authUser
+    ? { id: authUser.uid, email: authUser.email ?? "", role: userRole(authUser) }
+    : { id: "", email: "", role: "user" as UserRole };
+  const isAdmin = currentUser.role === "admin";
+  const visibleTabs = tabs.filter((tab) => isAdmin || tab.id !== "create");
 
   useEffect(() => {
     const auth = getFirebaseAuth();
@@ -911,6 +934,15 @@ export default function Home() {
 
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (activeTab !== "create" || isAdmin) {
+      return;
+    }
+
+    setActiveTab("markets");
+    setNotice("Not authorized.");
+  }, [activeTab, isAdmin]);
 
   useEffect(() => {
     if (!authUser) {
@@ -988,8 +1020,26 @@ export default function Home() {
             color: typeof data.color === "string" ? data.color : "#facc15",
             totalSupply: typeof data.totalSupply === "number" ? data.totalSupply : 0,
             dropPrice: typeof data.dropPrice === "number" ? data.dropPrice : 1,
+            soldDropSupply: typeof data.soldDropSupply === "number"
+              ? data.soldDropSupply
+              : Math.max(
+                  0,
+                  (typeof data.totalSupply === "number" ? data.totalSupply : 0) -
+                    (typeof data.remainingDropSupply === "number" ? data.remainingDropSupply : 0),
+                ),
+            unsoldDropSupply: typeof data.unsoldDropSupply === "number"
+              ? data.unsoldDropSupply
+              : Math.max(0, typeof data.remainingDropSupply === "number" ? data.remainingDropSupply : 0),
+            activeTradableSupply: typeof data.activeTradableSupply === "number"
+              ? data.activeTradableSupply
+              : Math.max(
+                  0,
+                  (typeof data.totalSupply === "number" ? data.totalSupply : 0) -
+                    (typeof data.remainingDropSupply === "number" ? data.remainingDropSupply : 0),
+                ),
             remainingDropSupply: typeof data.remainingDropSupply === "number" ? data.remainingDropSupply : 0,
             status: data.status === "trading" ? "trading" : "drop",
+            source: data.source === "scheduled_drop" ? "scheduled_drop" : "manual",
             createdAt: timestampMillis(data.createdAt),
           } satisfies Asset;
         });
@@ -1305,6 +1355,12 @@ export default function Home() {
       return;
     }
 
+    if (!isAdmin) {
+      setActiveTab("markets");
+      setNotice("Not authorized.");
+      return;
+    }
+
     const db = getFirebaseDb();
 
     if (!db) {
@@ -1335,11 +1391,15 @@ export default function Home() {
         supply: cleanSupply,
         totalSupply: cleanSupply,
         dropPrice: cleanPrice,
+        soldDropSupply: 0,
+        unsoldDropSupply: cleanSupply,
+        activeTradableSupply: 0,
         remainingDropSupply: cleanSupply,
         status: "drop",
         description: "",
         signal: "",
         color: marketColor,
+        source: "manual",
         createdBy: authUser.uid,
         createdByName: accountName,
         createdAt,
@@ -1408,7 +1468,7 @@ export default function Home() {
       setSuggestionCategory("Event");
       setSuggestionReason("");
       setActiveTab("survey");
-      setNotice("Suggestion added to the survey.");
+      setNotice("Suggestion added to voting.");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Suggestion failed.");
     }
@@ -1510,6 +1570,9 @@ export default function Home() {
     const nextCoins = coins - totalCost;
     const nextHolding = applyTradeToHolding(selectedHolding, buyQuantity, selectedAsset.dropPrice);
     const nextRemainingSupply = selectedAsset.remainingDropSupply - buyQuantity;
+    const nextSoldDropSupply = selectedAsset.soldDropSupply + buyQuantity;
+    const nextActiveTradableSupply = selectedAsset.activeTradableSupply + buyQuantity;
+    const nextVolume = selectedAsset.volume + totalCost;
     const nextStatus: MarketStatus = nextRemainingSupply <= 0 ? "trading" : "drop";
     const historyTimestamp = Math.floor(performance.timeOrigin + event.timeStamp);
     const historyEvent: MarketHistoryPoint = {
@@ -1570,7 +1633,11 @@ export default function Home() {
     );
 
     batch.update(doc(db, "markets", selectedAsset.id), {
+      soldDropSupply: nextSoldDropSupply,
+      unsoldDropSupply: nextRemainingSupply,
+      activeTradableSupply: nextActiveTradableSupply,
       remainingDropSupply: nextRemainingSupply,
+      volume: nextVolume,
       status: nextStatus,
       updatedAt: serverTimestamp(),
     });
@@ -1589,8 +1656,27 @@ export default function Home() {
     setCoins(nextCoins);
     setHoldings((current) => ({ ...current, [selectedAsset.id]: nextHolding }));
     setMarketHistory((current) => dedupeHistoryPoints([...current, historyEvent]));
+    setAssets((currentAssets) =>
+      currentAssets.map((asset) =>
+        asset.id === selectedAsset.id
+          ? {
+              ...asset,
+              soldDropSupply: nextSoldDropSupply,
+              unsoldDropSupply: nextRemainingSupply,
+              activeTradableSupply: nextActiveTradableSupply,
+              remainingDropSupply: nextRemainingSupply,
+              volume: nextVolume,
+              status: nextStatus,
+            }
+          : asset,
+      ),
+    );
     setDropQuantity(1);
-    setNotice(nextStatus === "trading" ? "Drop sold out." : `${buyQuantity} bought.`);
+    setNotice(
+      nextStatus === "trading"
+        ? "Drop sold out. All purchased supply is tradable."
+        : `${buyQuantity} bought. ${nextActiveTradableSupply} total units are now tradable.`,
+    );
   }
 
   async function deleteMarket(assetId: string) {
@@ -1725,6 +1811,11 @@ export default function Home() {
       return;
     }
 
+    if (!isAdmin) {
+      setNotice("Not authorized.");
+      return;
+    }
+
     if (!window.confirm("Reset all markets, drops, trades, orders, portfolios, coins, and surveys?")) {
       return;
     }
@@ -1817,12 +1908,27 @@ export default function Home() {
 
   const selectedAsset = assets.find((asset) => asset.id === selectedAssetId);
   const activeDrops = assets.filter((asset) => asset.status === "drop" && asset.remainingDropSupply > 0);
-  const tradingMarkets = assets.filter((asset) => asset.status === "trading");
+  const tradingMarkets = assets.filter((asset) => asset.activeTradableSupply > 0);
+  const matchesAssetSearch = (asset: Asset, query: string) => {
+    const queryText = query.trim().toLowerCase();
+
+    if (!queryText) {
+      return true;
+    }
+
+    return [asset.name, asset.category, asset.description, asset.signal, levelCopy[asset.level].label, asset.status]
+      .join(" ")
+      .toLowerCase()
+      .includes(queryText);
+  };
+  const visibleMarkets = assets.filter((asset) => matchesAssetSearch(asset, marketSearch));
+  const visibleActiveDrops = activeDrops.filter((asset) => matchesAssetSearch(asset, dropSearch));
+  const visibleTradingMarkets = tradingMarkets.filter((asset) => matchesAssetSearch(asset, tradeSearch));
   const portfolioAssets = assets.filter((asset) => (holdings[asset.id]?.quantity ?? 0) > 0);
   const visibleAsset =
     activeTab === "drop" && selectedAsset && !activeDrops.some((asset) => asset.id === selectedAsset.id)
       ? undefined
-      : activeTab === "trading" && selectedAsset?.status !== "trading"
+      : activeTab === "trading" && (!selectedAsset || selectedAsset.activeTradableSupply <= 0)
       ? undefined
       : selectedAsset;
   const selectedAssetOrderId = selectedAsset?.id ?? "";
@@ -1945,53 +2051,80 @@ export default function Home() {
     setProcessingDropCycle(true);
 
     try {
-      const batch = writeBatch(db);
       const createdMarketIds: string[] = [];
 
-      drops.forEach((drop) => {
-        const marketRef = doc(db, "markets", `drop_${cycleDropTime}_${drop.suggestionId}`);
-        const historyRef = doc(db, "marketHistory", `drop_${cycleDropTime}_${drop.suggestionId}`);
+      const launched = await runTransaction(db, async (transaction) => {
+        const cycleRef = doc(db, "dropCycles", String(cycleDropTime));
+        const cycleSnapshot = await transaction.get(cycleRef);
 
-        createdMarketIds.push(marketRef.id);
-        batch.set(marketRef, {
-          name: drop.title,
-          category: drop.category,
-          level: "community",
-          volatility: 0,
-          lastPrice: drop.price,
-          previousPrice: drop.price,
-          volume: 0,
-          supply: drop.plannedSupply,
-          totalSupply: drop.plannedSupply,
-          dropPrice: drop.price,
-          remainingDropSupply: drop.plannedSupply,
-          status: "drop",
-          description: `Dropped from Survey with ${drop.votes} votes.`,
-          signal: "Survey ranked",
-          color: "#facc15",
+        if (cycleSnapshot.exists()) {
+          return false;
+        }
+
+        const lockedDrops = drops.slice(0, DROP_BATCH_SIZE);
+
+        transaction.set(cycleRef, {
+          dropTime: cycleDropTime,
+          suggestionIds: lockedDrops.map((drop) => drop.suggestionId),
           createdBy: authUser.uid,
           createdByName: accountName,
-          createdAt: cycleDropTime,
-          updatedAt: cycleDropTime,
+          createdAt: serverTimestamp(),
         });
-        batch.set(historyRef, {
-          marketId: marketRef.id,
-          timestamp: cycleDropTime,
-          price: drop.price,
-          volume: 0,
-          quantity: 0,
-          eventType: "create",
-          transactionId: marketRef.id,
+
+        lockedDrops.forEach((drop, index) => {
+          const marketRef = doc(db, "markets", `drop_${cycleDropTime}_${index + 1}`);
+          const historyRef = doc(db, "marketHistory", `drop_${cycleDropTime}_${index + 1}`);
+
+          createdMarketIds.push(marketRef.id);
+          transaction.set(marketRef, {
+            name: drop.title,
+            category: drop.category,
+            level: "community",
+            volatility: 0,
+            lastPrice: drop.price,
+            previousPrice: drop.price,
+            volume: 0,
+            supply: drop.plannedSupply,
+            totalSupply: drop.plannedSupply,
+            dropPrice: drop.price,
+            soldDropSupply: 0,
+            unsoldDropSupply: drop.plannedSupply,
+            activeTradableSupply: 0,
+            remainingDropSupply: drop.plannedSupply,
+            status: "drop",
+            description: `Dropped from Vote with ${drop.votes} votes.`,
+            signal: "Vote ranked",
+            color: "#facc15",
+            source: "scheduled_drop",
+            createdBy: authUser.uid,
+            createdByName: accountName,
+            createdAt: cycleDropTime,
+            updatedAt: cycleDropTime,
+          });
+          transaction.set(historyRef, {
+            marketId: marketRef.id,
+            timestamp: cycleDropTime,
+            price: drop.price,
+            volume: 0,
+            quantity: 0,
+            eventType: "create",
+            transactionId: marketRef.id,
+          });
+          transaction.delete(doc(db, "suggestions", drop.suggestionId));
         });
-        batch.delete(doc(db, "suggestions", drop.suggestionId));
+
+        return true;
       });
 
-      await batch.commit();
+      if (!launched) {
+        setNotice("This drop cycle already launched.");
+        return;
+      }
 
       setSkippedDropSuggestionIds([]);
       setSelectedAssetId(createdMarketIds[0] ?? "");
       setLimitPrice(drops[0]?.price ?? 1);
-      setNotice(`${drops.length} survey drops are live.`);
+      setNotice(`${Math.min(drops.length, DROP_BATCH_SIZE)} vote drops are live.`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Drop launch failed.");
     } finally {
@@ -2028,6 +2161,11 @@ export default function Home() {
 
     if (!selectedAsset) {
       setNotice("No market selected.");
+      return;
+    }
+
+    if (selectedAsset.activeTradableSupply <= 0) {
+      setNotice("No purchased supply is tradable yet.");
       return;
     }
 
@@ -2394,13 +2532,20 @@ export default function Home() {
           >
             <Image src="/buzzy-logo.svg" alt="Buzzy logo" width={48} height={48} className="h-12 w-12 rounded-2xl shadow-card" />
             <span>
-              <span className="block text-lg font-black">Buzzy</span>
+              <span className="flex items-center gap-2">
+                <span className="block text-lg font-black">Buzzy</span>
+                {isAdmin ? (
+                  <span className="rounded-full border border-danger bg-red-50 px-2 py-0.5 text-xs font-black text-danger">
+                    ADMIN
+                  </span>
+                ) : null}
+              </span>
               <span className="block text-xs font-semibold uppercase tracking-[0.16em] text-muted">Trade the Hype</span>
             </span>
           </button>
 
           <div className="mt-6 flex gap-2 overflow-x-auto pb-1 xl:flex-col xl:overflow-visible">
-            {tabs.map((tab) => (
+            {visibleTabs.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
@@ -2444,7 +2589,20 @@ export default function Home() {
                 <h2 className="text-2xl font-black">Markets</h2>
                 <p className="mt-1 text-sm text-muted">Live hype markets, drops, and momentum.</p>
               </div>
-              <span className="rounded-full bg-brand px-3 py-1 text-xs font-black">{assets.length} listed</span>
+              <span className="rounded-full bg-brand px-3 py-1 text-xs font-black">
+                {visibleMarkets.length}/{assets.length} listed
+              </span>
+            </div>
+            <div className="mt-5 rounded-3xl bg-surface-warm p-4">
+              <label className="text-sm font-bold text-muted">
+                Search markets
+                <input
+                  value={marketSearch}
+                  onChange={(event) => setMarketSearch(event.target.value)}
+                  placeholder="Search by name, category, or status"
+                  className="mt-2 w-full rounded-2xl border border-border px-4 py-3 text-foreground outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/30"
+                />
+              </label>
             </div>
             {assets.length ? null : (
               <p className="mt-4 rounded-2xl bg-surface-warm px-4 py-3 text-sm text-muted">No markets.</p>
@@ -2452,7 +2610,7 @@ export default function Home() {
           </div>
           ) : null}
 
-          {activeTab === "create" ? (
+          {activeTab === "create" && isAdmin ? (
           <form onSubmit={createMarket} className="rounded-[2rem] border border-border bg-surface p-6 shadow-card">
             <div className="flex flex-col gap-2 border-b border-border pb-5">
               <span className="w-fit rounded-full bg-brand px-3 py-1 text-xs font-black uppercase tracking-[0.12em]">Market studio</span>
@@ -2580,15 +2738,17 @@ export default function Home() {
 
           {activeTab === "survey" ? (
             <div className="rounded-[2rem] border border-border bg-surface p-6 shadow-card">
-              <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+              <div>
                 <div>
-                  <h2 className="text-2xl font-black">Survey Suggestions</h2>
+                    <h2 className="text-2xl font-black">Vote Suggestions</h2>
                   <p className="mt-2 text-sm leading-6 text-muted">
-                    Search community ideas and upvote the drops you want listed next. Results are sorted by popularity.
+                    Search community ideas and vote for the drops you want listed next. Results are sorted by popularity.
                   </p>
                 </div>
-                <label className="w-full text-sm font-bold text-muted md:max-w-sm">
-                  Search
+              </div>
+              <div className="mt-5 rounded-3xl bg-surface-warm p-4">
+                <label className="text-sm font-bold text-muted">
+                  Search votes
                   <input
                     value={surveySearch}
                     onChange={(event) => setSurveySearch(event.target.value)}
@@ -2647,7 +2807,7 @@ export default function Home() {
 
           {activeTab === "markets" && assets.length ? (
             <div className="grid gap-4 lg:grid-cols-2">
-              {assets.map((asset) => {
+              {visibleMarkets.length ? visibleMarkets.map((asset) => {
                 const assetChange = asset.previousPrice
                   ? ((asset.lastPrice - asset.previousPrice) / asset.previousPrice) * 100
                   : 0;
@@ -2690,7 +2850,11 @@ export default function Home() {
                     </div>
                   </button>
                 );
-              })}
+              }) : (
+                <p className="rounded-2xl bg-surface-warm px-4 py-3 text-sm text-muted">
+                  No markets match that search.
+                </p>
+              )}
             </div>
           ) : null}
 
@@ -2713,7 +2877,13 @@ export default function Home() {
                     key={drop.id}
                     drop={drop}
                     now={now}
+                    canRemove={isAdmin}
                     onRemove={() => {
+                      if (!isAdmin) {
+                        setNotice("Not authorized.");
+                        return;
+                      }
+
                       setSkippedDropSuggestionIds((current) =>
                         current.includes(drop.suggestionId) ? current : [...current, drop.suggestionId],
                       );
@@ -2728,17 +2898,28 @@ export default function Home() {
               </div>
               {activeDrops.length ? (
                 <div className="rounded-[2rem] border border-border bg-surface p-6 shadow-card">
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                  <div className="flex flex-wrap items-end justify-between gap-3">
                     <div>
                       <h3 className="text-2xl font-black">Live Drops</h3>
                       <p className="mt-1 text-sm text-muted">Recently launched drops are available to buy below.</p>
                     </div>
                     <span className="w-fit rounded-full bg-brand px-3 py-1 text-xs font-black">
-                      {activeDrops.length} live
+                      {visibleActiveDrops.length}/{activeDrops.length} live
                     </span>
                   </div>
+                  <div className="mt-5 rounded-3xl bg-surface-warm p-4">
+                    <label className="text-sm font-bold text-muted">
+                      Search live drops
+                      <input
+                        value={dropSearch}
+                        onChange={(event) => setDropSearch(event.target.value)}
+                        placeholder="Search by name, category, or status"
+                        className="mt-2 w-full rounded-2xl border border-border px-4 py-3 text-foreground outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/30"
+                      />
+                    </label>
+                  </div>
                   <div className="mt-5 grid gap-3 lg:grid-cols-2">
-                    {activeDrops.map((asset) => (
+                    {visibleActiveDrops.length ? visibleActiveDrops.map((asset) => (
                       <button
                         key={asset.id}
                         onClick={() => {
@@ -2763,15 +2944,19 @@ export default function Home() {
                           </div>
                           <div>
                             <p className="text-xs font-bold uppercase tracking-[0.12em] text-quiet">Left</p>
-                            <p className="font-bold">{asset.remainingDropSupply}</p>
+                            <p className="font-bold">{asset.unsoldDropSupply}</p>
                           </div>
                           <div>
-                            <p className="text-xs font-bold uppercase tracking-[0.12em] text-quiet">Limit</p>
-                            <p className="font-bold">{dropPurchaseLimit(asset)}</p>
+                            <p className="text-xs font-bold uppercase tracking-[0.12em] text-quiet">Tradable</p>
+                            <p className="font-bold">{asset.activeTradableSupply}</p>
                           </div>
                         </div>
                       </button>
-                    ))}
+                    )) : (
+                      <p className="rounded-2xl bg-surface-warm px-4 py-3 text-sm text-muted">
+                        No live drops match that search.
+                      </p>
+                    )}
                   </div>
                 </div>
               ) : null}
@@ -2780,18 +2965,29 @@ export default function Home() {
 
           {activeTab === "trading" ? (
             <div className="rounded-[2rem] border border-border bg-surface p-6 shadow-card">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+              <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
                   <h2 className="text-2xl font-black">Active Trades</h2>
                   <p className="mt-1 text-sm text-muted">Select a live market, then choose buy or sell below.</p>
                 </div>
                 <span className="w-fit rounded-full bg-brand px-3 py-1 text-xs font-black">
-                  {tradingMarkets.length} live
+                  {visibleTradingMarkets.length}/{tradingMarkets.length} live
                 </span>
+              </div>
+              <div className="mt-5 rounded-3xl bg-surface-warm p-4">
+                <label className="text-sm font-bold text-muted">
+                  Search trades
+                  <input
+                    value={tradeSearch}
+                    onChange={(event) => setTradeSearch(event.target.value)}
+                    placeholder="Search by name, category, or status"
+                    className="mt-2 w-full rounded-2xl border border-border px-4 py-3 text-foreground outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/30"
+                  />
+                </label>
               </div>
 
               <div className="mt-5 grid gap-3 lg:grid-cols-2">
-                {tradingMarkets.length ? tradingMarkets.map((asset) => {
+                {visibleTradingMarkets.length ? visibleTradingMarkets.map((asset) => {
                   const assetChange = asset.previousPrice
                     ? ((asset.lastPrice - asset.previousPrice) / asset.previousPrice) * 100
                     : 0;
@@ -2824,19 +3020,23 @@ export default function Home() {
                           <p className="font-bold">{asset.lastPrice}</p>
                         </div>
                         <div>
-                          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-quiet">Bid</p>
-                          <p className="font-bold">{assetBuyOrders[0]?.limitPrice ?? "none"}</p>
+                          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-quiet">Tradable</p>
+                          <p className="font-bold">{asset.activeTradableSupply}</p>
                         </div>
                         <div>
-                          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-quiet">Ask</p>
-                          <p className="font-bold">{assetSellOrders[0]?.limitPrice ?? "none"}</p>
+                          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-quiet">Sold</p>
+                          <p className="font-bold">
+                            {((asset.soldDropSupply / Math.max(1, asset.totalSupply)) * 100).toFixed(0)}%
+                          </p>
                         </div>
                       </div>
                     </button>
                   );
                 }) : (
                   <p className="rounded-2xl bg-surface-warm px-4 py-3 text-sm text-muted">
-                    No markets are trading yet. Buy from an active drop first to move it into trading.
+                    {tradingMarkets.length
+                      ? "No trade markets match that search."
+                      : "No markets are trading yet. Buy from an active drop first to move it into trading."}
                   </p>
                 )}
               </div>
@@ -2870,12 +3070,14 @@ export default function Home() {
                   <span className="rounded-full bg-brand px-2 py-1 text-xs font-black text-foreground">
                     {visibleAsset.status}
                   </span>
-                  <button
-                    onClick={() => void deleteMarket(visibleAsset.id)}
-                    className="rounded-full border border-border px-3 py-1 text-xs font-bold text-danger transition hover:border-danger"
-                  >
-                    Delete
-                  </button>
+                  {isAdmin ? (
+                    <button
+                      onClick={() => void deleteMarket(visibleAsset.id)}
+                      className="rounded-full border border-border px-3 py-1 text-xs font-bold text-danger transition hover:border-danger"
+                    >
+                      Delete
+                    </button>
+                  ) : null}
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3 text-right sm:grid-cols-4">
@@ -2894,8 +3096,12 @@ export default function Home() {
                   <p className="text-2xl font-bold">{formatVolatility(visibleAsset.volatility)}</p>
                 </div>
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-quiet">Supply</p>
-                  <p className="text-2xl font-bold">{visibleAsset.remainingDropSupply}</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-quiet">
+                    {activeTab === "trading" ? "Tradable" : "Unsold"}
+                  </p>
+                  <p className="text-2xl font-bold">
+                    {activeTab === "trading" ? visibleAsset.activeTradableSupply : visibleAsset.unsoldDropSupply}
+                  </p>
                 </div>
               </div>
             </div>
@@ -2920,22 +3126,23 @@ export default function Home() {
                       <p>Price: {currency(visibleAsset.dropPrice)}</p>
                       <p>Total: {currency(Math.min(dropQuantity, selectedDropLimitRemaining, visibleAsset.remainingDropSupply) * visibleAsset.dropPrice)}</p>
                       <p>Limit: 5% per user ({dropPurchaseLimit(visibleAsset)} max)</p>
-                      <p>Remaining: {visibleAsset.remainingDropSupply}</p>
+                      <p>Remaining: {visibleAsset.unsoldDropSupply}</p>
+                      <p>Tradable after purchase: {visibleAsset.activeTradableSupply + Math.min(dropQuantity, selectedDropLimitRemaining, visibleAsset.remainingDropSupply)}</p>
                     </div>
                   </div>
                   <div className="mt-4 rounded-2xl border border-border p-3">
                     <div className="flex justify-between text-xs font-bold uppercase tracking-[0.12em] text-quiet">
-                      <span>Available</span>
-                      <span>{((1 - visibleAsset.remainingDropSupply / Math.max(1, visibleAsset.totalSupply)) * 100).toFixed(0)}% sold</span>
+                      <span>Purchased</span>
+                      <span>{((visibleAsset.soldDropSupply / Math.max(1, visibleAsset.totalSupply)) * 100).toFixed(0)}% sold</span>
                     </div>
                     <div className="mt-2 h-3 overflow-hidden rounded-full bg-surface-soft">
                       <div
                         className="h-full rounded-full bg-brand"
-                        style={{ width: `${(1 - visibleAsset.remainingDropSupply / Math.max(1, visibleAsset.totalSupply)) * 100}%` }}
+                        style={{ width: `${(visibleAsset.soldDropSupply / Math.max(1, visibleAsset.totalSupply)) * 100}%` }}
                       />
                     </div>
                     <p className="mt-2 text-sm font-bold text-muted">
-                      You can still buy {selectedDropLimitRemaining} from this drop.
+                      You can still buy {selectedDropLimitRemaining} from this drop. Only purchased units become tradable.
                     </p>
                   </div>
                   <button className="mt-4 w-full rounded-2xl bg-brand px-4 py-3 font-black text-foreground transition hover:-translate-y-0.5 hover:bg-brand-hover">
@@ -2948,9 +3155,10 @@ export default function Home() {
                 <div className="rounded-3xl border border-border p-4">
                   <h3 className="font-black">Drop Supply</h3>
                   <div className="mt-4 rounded-2xl bg-surface-warm p-3 text-sm leading-6 text-muted">
-                    <p>Total supply: {visibleAsset.totalSupply}</p>
-                    <p>Remaining: {visibleAsset.remainingDropSupply}</p>
-                    <p>Sold: {visibleAsset.totalSupply - visibleAsset.remainingDropSupply}</p>
+                    <p>Total drop supply: {visibleAsset.totalSupply}</p>
+                    <p>Sold drop supply: {visibleAsset.soldDropSupply}</p>
+                    <p>Unsold drop supply: {visibleAsset.unsoldDropSupply}</p>
+                    <p>Active tradable supply: {visibleAsset.activeTradableSupply}</p>
                   </div>
                 </div>
               </div>
@@ -3000,6 +3208,7 @@ export default function Home() {
                 <div className="mt-4 rounded-2xl bg-surface-warm p-3 text-sm leading-6 text-muted">
                   <p>Best bid: {bestBid ? currency(bestBid) : "none"}</p>
                   <p>Best ask: {bestAsk ? currency(bestAsk) : "none"}</p>
+                  <p>Active tradable supply: {visibleAsset.activeTradableSupply}</p>
                   <p>Estimated max value: {currency(quantity * limitPrice)}</p>
                   <p>Your shares: {selectedHolding.quantity}</p>
                 </div>
@@ -3148,12 +3357,14 @@ export default function Home() {
               >
                 Sign out
               </button>
-              <button
-                onClick={() => void resetEconomy()}
-                className="mt-3 w-full rounded-2xl border border-danger px-4 py-3 font-bold text-danger transition hover:bg-red-50"
-              >
-                Reset everything
-              </button>
+              {isAdmin ? (
+                <button
+                  onClick={() => void resetEconomy()}
+                  className="mt-3 w-full rounded-2xl border border-danger px-4 py-3 font-bold text-danger transition hover:bg-red-50"
+                >
+                  Reset everything
+                </button>
+              ) : null}
             </div>
           ) : null}
             </div>
