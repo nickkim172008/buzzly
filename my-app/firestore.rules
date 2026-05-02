@@ -73,7 +73,8 @@ service cloud.firestore {
         && request.resource.data.remainingDropSupply is number
         && request.resource.data.remainingDropSupply >= 0
         && request.resource.data.status in ["drop", "trading"]
-        && request.resource.data.createdBy is string;
+        && (!request.resource.data.keys().hasAny(["createdBy"])
+          || request.resource.data.createdBy is string);
     }
 
     match /balances/{userId} {
@@ -164,6 +165,40 @@ service cloud.firestore {
         && request.resource.data.price >= 1
         && request.resource.data.quantity is number
         && request.resource.data.quantity >= 1;
+    }
+
+    match /marketHistory/{historyId} {
+      allow read: if request.auth != null;
+      allow delete: if request.auth != null;
+      allow create: if request.auth != null
+        && request.resource.data.keys().hasOnly([
+          "marketId",
+          "timestamp",
+          "price",
+          "volume",
+          "quantity",
+          "eventType",
+          "transactionId"
+        ])
+        && request.resource.data.marketId is string
+        && request.resource.data.timestamp is number
+        && request.resource.data.price is number
+        && request.resource.data.price >= 1
+        && request.resource.data.volume is number
+        && request.resource.data.volume >= 0
+        && request.resource.data.quantity is number
+        && request.resource.data.quantity >= 0
+        && request.resource.data.eventType in [
+          "create",
+          "drop_buy",
+          "bulk_drop_buy",
+          "buy",
+          "sell",
+          "bulk_buy",
+          "bulk_sell",
+          "price_update",
+          "resolve"
+        ];
     }
 
     match /suggestions/{suggestionId} {

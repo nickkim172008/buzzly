@@ -22,7 +22,9 @@ type MarketLevel = "admin" | "community" | "private";
 type MarketStatus = "drop" | "trading";
 type Side = "buy" | "sell";
 type OrderStatus = "open" | "filled" | "partially_filled";
-type AppTab = "markets" | "suggest" | "survey" | "create" | "drop" | "trading" | "portfolio" | "account";
+type AppTab = "markets" | "suggest" | "survey" | "create" | "drop" | "timing" | "trading" | "portfolio" | "account";
+type ChartRange = "1D" | "1W" | "1M" | "3M" | "6M" | "YTD" | "1Y" | "ALL";
+type ChartMode = "value" | "returns";
 
 type Asset = {
   id: string;
@@ -41,6 +43,7 @@ type Asset = {
   dropPrice: number;
   remainingDropSupply: number;
   status: MarketStatus;
+  createdAt: number;
 };
 
 type Order = {
@@ -99,6 +102,46 @@ type Suggestion = {
   createdAt: number;
 };
 
+type PortfolioSlice = {
+  asset: Asset;
+  quantity: number;
+  value: number;
+  percent: number;
+};
+
+type UpcomingDrop = {
+  id: string;
+  title: string;
+  description: string;
+  releaseAt: number;
+  status: string;
+  limit: number;
+  remaining: number;
+  total: number;
+};
+
+type MarketHistoryEvent =
+  | "create"
+  | "drop_buy"
+  | "bulk_drop_buy"
+  | "buy"
+  | "sell"
+  | "bulk_buy"
+  | "bulk_sell"
+  | "price_update"
+  | "resolve";
+
+type MarketHistoryPoint = {
+  id: string;
+  marketId: string;
+  timestamp: number;
+  price: number;
+  volume: number;
+  quantity: number;
+  eventType: MarketHistoryEvent;
+  transactionId?: string;
+};
+
 declare global {
   interface Window {
     buzzlyAddCoins?: (amount: number) => Promise<number>;
@@ -125,6 +168,8 @@ const levelCopy: Record<
 };
 
 const STARTING_COINS = 0;
+const DROP_PURCHASE_LIMIT = 2;
+const chartRanges: ChartRange[] = ["1D", "1W", "1M", "3M", "6M", "YTD", "1Y", "ALL"];
 
 const tabs: { id: AppTab; label: string; mark: string }[] = [
   { id: "markets", label: "Markets", mark: "M" },
@@ -132,6 +177,7 @@ const tabs: { id: AppTab; label: string; mark: string }[] = [
   { id: "survey", label: "Survey", mark: "V" },
   { id: "create", label: "Create", mark: "+" },
   { id: "drop", label: "Drop", mark: "D" },
+  { id: "timing", label: "Timing", mark: "C" },
   { id: "trading", label: "Trade", mark: "T" },
   { id: "portfolio", label: "Portfolio", mark: "P" },
   { id: "account", label: "Account", mark: "A" },
@@ -194,6 +240,15 @@ function TabIcon({ id }: { id: AppTab }) {
     );
   }
 
+  if (id === "timing") {
+    return (
+      <svg {...iconProps}>
+        <path d="M12 7V12L15 14" />
+        <path d="M21 12A9 9 0 1 1 3 12A9 9 0 0 1 21 12Z" />
+      </svg>
+    );
+  }
+
   if (id === "trading") {
     return (
       <svg {...iconProps}>
@@ -248,6 +303,394 @@ function formatPercent(value: number) {
 
 function formatVolatility(value: number) {
   return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatClock(ms: number) {
+  const safeMs = Math.max(0, ms);
+  const days = Math.floor(safeMs / 86_400_000);
+  const hours = Math.floor((safeMs % 86_400_000) / 3_600_000);
+  const minutes = Math.floor((safeMs % 3_600_000) / 60_000);
+  const seconds = Math.floor((safeMs % 60_000) / 1_000);
+
+  return `${days}d ${hours.toString().padStart(2, "0")}h ${minutes.toString().padStart(2, "0")}m ${seconds
+    .toString()
+    .padStart(2, "0")}s`;
+}
+
+function formatShortDate(timestamp: number) {
+  return new Intl.DateTimeFormat("en", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(timestamp));
+}
+
+function rangeStart(range: ChartRange, now: number) {
+  if (range === "ALL") return 0;
+  if (range === "1D") return now - 86_400_000;
+  if (range === "1W") return now - 7 * 86_400_000;
+  if (range === "1M") return now - 30 * 86_400_000;
+  if (range === "3M") return now - 90 * 86_400_000;
+  if (range === "6M") return now - 180 * 86_400_000;
+  if (range === "YTD") return new Date(new Date(now).getFullYear(), 0, 1).getTime();
+  if (range === "1Y") return now - 365 * 86_400_000;
+
+  return now - 540 * 86_400_000;
+}
+
+function formatChartTick(timestamp: number, range: ChartRange) {
+  if (range === "1D") {
+    return new Intl.DateTimeFormat("en", { hour: "numeric" }).format(new Date(timestamp));
+  }
+
+  if (range === "1W" || range === "1M") {
+    return new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(new Date(timestamp));
+  }
+
+  return new Intl.DateTimeFormat("en", { month: "short", year: "2-digit" }).format(new Date(timestamp));
+}
+
+function eventLabel(eventType: MarketHistoryEvent) {
+  return eventType.replaceAll("_", " ");
+}
+
+function dedupeHistoryPoints(points: MarketHistoryPoint[]) {
+  return points
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .filter((point, index, sorted) => {
+      const previous = sorted[index - 1];
+
+      return !previous ||
+        previous.marketId !== point.marketId ||
+        previous.timestamp !== point.timestamp ||
+        previous.price !== point.price ||
+        previous.volume !== point.volume ||
+        previous.quantity !== point.quantity ||
+        previous.eventType !== point.eventType ||
+        previous.transactionId !== point.transactionId;
+    });
+}
+
+function fallbackHistoryFromTrades(asset: Asset, assetTrades: Trade[]) {
+  const createdPoint: MarketHistoryPoint = {
+    id: `${asset.id}-created`,
+    marketId: asset.id,
+    timestamp: asset.createdAt || 0,
+    price: asset.dropPrice || asset.previousPrice || asset.lastPrice,
+    volume: 0,
+    quantity: 0,
+    eventType: "create",
+  };
+  const tradePoints = assetTrades.map((trade) => ({
+    id: `trade-${trade.id}`,
+    marketId: trade.assetId,
+    timestamp: trade.createdAt,
+    price: trade.price,
+    volume: trade.price * trade.quantity,
+    quantity: trade.quantity,
+    eventType: "price_update" as MarketHistoryEvent,
+    transactionId: trade.id,
+  }));
+
+  return [createdPoint, ...tradePoints].filter((point) => point.timestamp > 0 && point.price > 0);
+}
+
+function buildChartPoints(asset: Asset, historyPoints: MarketHistoryPoint[], assetTrades: Trade[], range: ChartRange, now: number) {
+  const start = rangeStart(range, now);
+  const sourcePoints = historyPoints.length ? historyPoints : fallbackHistoryFromTrades(asset, assetTrades);
+
+  return dedupeHistoryPoints(sourcePoints)
+    .filter((point) => point.timestamp >= start && point.timestamp <= now)
+    .map((point) => ({
+      ...point,
+      value: point.price,
+    }));
+}
+
+function pointsToPath(points: { x: number; y: number }[]) {
+  if (!points.length) return "";
+
+  return points
+    .map((point, index) => {
+      if (index === 0) {
+        return `M ${point.x} ${point.y}`;
+      }
+
+      return `L ${point.x} ${point.y}`;
+    })
+    .join(" ");
+}
+
+function MarketLineChart({
+  asset,
+  history,
+  trades,
+  range,
+  mode,
+  now,
+  onRangeChange,
+  onModeChange,
+}: {
+  asset: Asset;
+  history: MarketHistoryPoint[];
+  trades: Trade[];
+  range: ChartRange;
+  mode: ChartMode;
+  now: number;
+  onRangeChange: (range: ChartRange) => void;
+  onModeChange: (mode: ChartMode) => void;
+}) {
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+  const rawPoints = buildChartPoints(asset, history, trades, range, now);
+  const firstValue = rawPoints[0]?.value ?? asset.lastPrice;
+  const chartValues = rawPoints.map((point) => ({
+    ...point,
+    value: mode === "returns" ? ((point.value - firstValue) / Math.max(1, firstValue)) * 100 : point.value,
+  }));
+  const values = chartValues.map((point) => point.value);
+  const minValue = values.length ? Math.min(...values) : 0;
+  const maxValue = values.length ? Math.max(...values) : 1;
+  const valueRange = Math.max(1, maxValue - minValue);
+  const width = 720;
+  const height = 260;
+  const padding = 22;
+  const minTime = rawPoints[0]?.timestamp ?? rangeStart(range, now);
+  const maxTime = rawPoints.at(-1)?.timestamp ?? now;
+  const timeRange = Math.max(1, maxTime - minTime);
+  const svgPoints = chartValues.map((point) => ({
+    x: padding + ((point.timestamp - minTime) / timeRange) * (width - padding * 2),
+    y: padding + (1 - (point.value - minValue) / valueRange) * (height - padding * 2),
+  }));
+  const path = pointsToPath(svgPoints);
+  const areaPath = `${path} L ${width - padding} ${height - padding} L ${padding} ${height - padding} Z`;
+  const activeIndex = hoverIndex ?? chartValues.length - 1;
+  const activePoint = chartValues[activeIndex];
+  const activeSvgPoint = svgPoints[activeIndex];
+  const dailyGain = rawPoints.length > 1 ? rawPoints[rawPoints.length - 1].value - rawPoints[0].value : 0;
+  const dailyReturn = rawPoints.length > 1 ? (dailyGain / Math.max(1, rawPoints[0].value)) * 100 : 0;
+  const activePrevious = activeIndex > 0 ? rawPoints[activeIndex - 1] : undefined;
+  const pointChange = activePoint && activePrevious ? activePoint.price - activePrevious.price : 0;
+  const displayValue = activePoint
+    ? mode === "returns" ? `${activePoint.value.toFixed(2)}%` : currency(activePoint.price)
+    : "No data";
+  const ticks = Array.from({ length: 4 }, (_, index) => minTime + (index / 3) * timeRange);
+
+  return (
+    <div className="rounded-[2rem] border border-border bg-surface p-5 shadow-card">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Market value</p>
+          <p className="mt-2 text-4xl font-black">{currency(rawPoints[rawPoints.length - 1]?.value ?? asset.lastPrice)}</p>
+          <p className={`mt-1 text-sm font-bold ${dailyGain >= 0 ? "text-positive" : "text-danger"}`}>
+            {dailyGain >= 0 ? "+" : ""}
+            {currency(dailyGain)} today ({formatPercent(dailyReturn)})
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <div className="flex rounded-2xl bg-surface-warm p-1">
+            {(["value", "returns"] as ChartMode[]).map((option) => (
+              <button
+                key={option}
+                type="button"
+                onClick={() => onModeChange(option)}
+                className={`rounded-xl px-3 py-2 text-xs font-black capitalize transition ${
+                  mode === option ? "bg-brand shadow-card" : "text-muted"
+                }`}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap rounded-2xl bg-surface-warm p-1">
+            {chartRanges.map((option) => (
+              <button
+                key={option}
+                type="button"
+                onClick={() => onRangeChange(option)}
+                className={`rounded-xl px-2.5 py-2 text-xs font-black transition ${
+                  range === option ? "bg-foreground text-white shadow-card" : "text-muted"
+                }`}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-5 rounded-3xl border border-border bg-background p-3">
+        {rawPoints.length ? (
+          <>
+        <svg
+            viewBox={`0 0 ${width} ${height}`}
+            className="h-72 w-full touch-none overflow-visible"
+            onPointerLeave={() => setHoverIndex(null)}
+            onPointerMove={(event) => {
+              const box = event.currentTarget.getBoundingClientRect();
+              const pointerTime = minTime + Math.min(1, Math.max(0, (event.clientX - box.left) / box.width)) * timeRange;
+              const nextIndex = rawPoints.reduce((closestIndex, point, index) => {
+                const closestDistance = Math.abs(rawPoints[closestIndex].timestamp - pointerTime);
+                const pointDistance = Math.abs(point.timestamp - pointerTime);
+
+                return pointDistance < closestDistance ? index : closestIndex;
+              }, 0);
+
+              setHoverIndex(nextIndex);
+            }}
+          >
+          <defs>
+            <linearGradient id="tradeLineGradient" x1="0" x2="1" y1="0" y2="0">
+              <stop offset="0%" stopColor="#171612" />
+              <stop offset="45%" stopColor="#168a4a" />
+              <stop offset="100%" stopColor="#f6c945" />
+            </linearGradient>
+            <linearGradient id="tradeAreaGradient" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stopColor="#f6c945" stopOpacity="0.35" />
+              <stop offset="100%" stopColor="#f6c945" stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          {[0, 1, 2, 3].map((line) => (
+            <line
+              key={line}
+              x1={padding}
+              x2={width - padding}
+              y1={padding + line * ((height - padding * 2) / 3)}
+              y2={padding + line * ((height - padding * 2) / 3)}
+              stroke="#e6ded0"
+              strokeDasharray="4 8"
+            />
+          ))}
+          {rawPoints.length > 1 ? <path d={areaPath} fill="url(#tradeAreaGradient)" /> : null}
+          <path d={path} fill="none" stroke="url(#tradeLineGradient)" strokeLinecap="round" strokeLinejoin="round" strokeWidth="4" />
+          {activePoint && activeSvgPoint ? (
+            <>
+              <line x1={activeSvgPoint.x} x2={activeSvgPoint.x} y1={padding} y2={height - padding} stroke="#171612" strokeOpacity="0.16" />
+              <circle cx={activeSvgPoint.x} cy={activeSvgPoint.y} r="7" fill="#fffdfa" stroke="#171612" strokeWidth="3" />
+              <foreignObject x={Math.min(width - 230, Math.max(12, activeSvgPoint.x - 105))} y={Math.max(10, activeSvgPoint.y - 94)} width="218" height="82">
+                <div className="rounded-2xl border border-border bg-surface px-3 py-2 text-xs shadow-card">
+                  <p className="font-black">{displayValue}</p>
+                  <p className={`mt-1 font-bold ${pointChange >= 0 ? "text-positive" : "text-danger"}`}>
+                    {pointChange >= 0 ? "+" : ""}
+                    {currency(pointChange)}
+                  </p>
+                  <p className="mt-1 capitalize text-muted">{formatShortDate(activePoint.timestamp)} · {eventLabel(activePoint.eventType)}</p>
+                </div>
+              </foreignObject>
+            </>
+          ) : null}
+        </svg>
+        <div className="grid grid-cols-4 gap-2 px-2 text-xs font-bold text-quiet">
+          {ticks.map((tick) => (
+            <span key={tick}>{formatChartTick(tick, range)}</span>
+          ))}
+        </div>
+        {rawPoints.length < 2 ? (
+          <p className="mt-3 rounded-2xl bg-surface-warm px-4 py-3 text-sm text-muted">
+            Only one real history point exists in this range. The chart will draw movement as new trades arrive.
+          </p>
+        ) : null}
+          </>
+        ) : (
+          <p className="rounded-2xl bg-surface-warm px-4 py-12 text-center text-sm font-bold text-muted">
+            No real price history exists for this market in the selected range.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PortfolioDonut({ slices }: { slices: PortfolioSlice[] }) {
+  let offset = 0;
+  const totalValue = slices.reduce((sum, slice) => sum + slice.value, 0);
+  const gradient = slices.length
+    ? slices
+        .map((slice) => {
+          const start = offset;
+          const end = offset + slice.percent;
+          offset = end;
+
+          return `${slice.asset.color} ${start}% ${end}%`;
+        })
+        .join(", ")
+    : "#e6ded0 0% 100%";
+
+  return (
+    <div className="rounded-[2rem] border border-border bg-surface p-6 shadow-card">
+      <div className="flex flex-col gap-6 lg:flex-row lg:items-center">
+        <div
+          className="grid aspect-square w-full max-w-64 place-items-center rounded-full"
+          style={{ background: `conic-gradient(${gradient})` }}
+        >
+          <div className="grid h-[58%] w-[58%] place-items-center rounded-full bg-surface text-center shadow-card">
+            <span>
+              <span className="block text-xs font-bold uppercase tracking-[0.12em] text-muted">Total</span>
+              <span className="block text-xl font-black">{currency(totalValue)}</span>
+            </span>
+          </div>
+        </div>
+        <div className="min-w-0 flex-1 space-y-3">
+          <div>
+            <h2 className="text-2xl font-black">Portfolio Breakdown</h2>
+            <p className="mt-1 text-sm text-muted">Owned value across markets.</p>
+          </div>
+          {slices.length ? slices.map((slice) => (
+            <div key={slice.asset.id} className="grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-2xl bg-surface-warm p-3">
+              <span className="h-3 w-3 rounded-full" style={{ background: slice.asset.color }} />
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-bold">{slice.asset.name}</span>
+                <span className="block text-xs text-muted">{slice.percent.toFixed(1)}% owned</span>
+              </span>
+              <span className="text-right text-sm font-black">{currency(slice.value)}</span>
+            </div>
+          )) : (
+            <p className="rounded-2xl bg-surface-warm px-4 py-3 text-sm text-muted">No holdings to visualize yet.</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DropTimingCard({ drop, now }: { drop: UpcomingDrop; now: number }) {
+  const remainingMs = drop.releaseAt - now;
+  const soldPercent = Math.min(100, Math.max(0, ((drop.total - drop.remaining) / Math.max(1, drop.total)) * 100));
+
+  return (
+    <div className="rounded-[2rem] border border-border bg-surface p-5 shadow-card">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-xl font-black">{drop.title}</p>
+          <p className="mt-1 text-sm leading-6 text-muted">{drop.description}</p>
+        </div>
+        <span className="shrink-0 rounded-full bg-brand px-3 py-1 text-xs font-black">{drop.status}</span>
+      </div>
+      <div className="mt-5 rounded-3xl bg-foreground p-4 text-white">
+        <p className="text-xs font-bold uppercase tracking-[0.14em] text-white/60">Time remaining</p>
+        <p className="mt-2 font-mono text-2xl font-black">{formatClock(remainingMs)}</p>
+      </div>
+      <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+        <div className="rounded-2xl bg-surface-warm p-3">
+          <p className="text-xs font-bold uppercase tracking-[0.12em] text-quiet">Release</p>
+          <p className="mt-1 font-bold">{formatShortDate(drop.releaseAt)}</p>
+        </div>
+        <div className="rounded-2xl bg-surface-warm p-3">
+          <p className="text-xs font-bold uppercase tracking-[0.12em] text-quiet">Limit</p>
+          <p className="mt-1 font-bold">{drop.limit} per user</p>
+        </div>
+      </div>
+      <div className="mt-4">
+        <div className="flex justify-between text-xs font-bold uppercase tracking-[0.12em] text-quiet">
+          <span>{drop.remaining} left</span>
+          <span>{soldPercent.toFixed(0)}% sold</span>
+        </div>
+        <div className="mt-2 h-3 overflow-hidden rounded-full bg-surface-soft">
+          <div className="h-full rounded-full bg-brand" style={{ width: `${soldPercent}%` }} />
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function calculateVolatility(prices: number[]) {
@@ -360,6 +803,7 @@ export default function Home() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [trades, setTrades] = useState<Trade[]>([]);
+  const [marketHistory, setMarketHistory] = useState<MarketHistoryPoint[]>([]);
   const [holdings, setHoldings] = useState<Record<string, Holding>>({});
   const [publicBalances, setPublicBalances] = useState<Record<string, PublicBalance>>({});
   const [publicHoldings, setPublicHoldings] = useState<Record<string, Holding>>({});
@@ -383,6 +827,9 @@ export default function Home() {
   const [surveySearch, setSurveySearch] = useState("");
   const [dropQuantity, setDropQuantity] = useState(1);
   const [activeTab, setActiveTab] = useState<AppTab>("markets");
+  const [chartRange, setChartRange] = useState<ChartRange>("1M");
+  const [chartMode, setChartMode] = useState<ChartMode>("value");
+  const [now, setNow] = useState(() => Date.now());
   const accountName = authUser ? userLabel(authUser) : "You";
 
   useEffect(() => {
@@ -398,6 +845,12 @@ export default function Home() {
       setSavedUserCoins(null);
       setAuthReady(true);
     });
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+
+    return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -478,6 +931,7 @@ export default function Home() {
             dropPrice: typeof data.dropPrice === "number" ? data.dropPrice : 1,
             remainingDropSupply: typeof data.remainingDropSupply === "number" ? data.remainingDropSupply : 0,
             status: data.status === "trading" ? "trading" : "drop",
+            createdAt: timestampMillis(data.createdAt),
           } satisfies Asset;
         });
 
@@ -528,6 +982,27 @@ export default function Home() {
             quantity: typeof data.quantity === "number" ? data.quantity : 0,
             createdAt: timestampMillis(data.createdAt),
           } satisfies Trade;
+        }));
+      },
+      (error) => setNotice(error.message),
+    );
+
+    const unsubscribeMarketHistory = onSnapshot(
+      query(collection(db, "marketHistory"), orderBy("timestamp", "asc")),
+      (snapshot) => {
+        setMarketHistory(snapshot.docs.map((historyDoc) => {
+          const data = historyDoc.data();
+
+          return {
+            id: historyDoc.id,
+            marketId: typeof data.marketId === "string" ? data.marketId : "",
+            timestamp: timestampMillis(data.timestamp),
+            price: typeof data.price === "number" ? data.price : 0,
+            volume: typeof data.volume === "number" ? data.volume : 0,
+            quantity: typeof data.quantity === "number" ? data.quantity : 0,
+            eventType: typeof data.eventType === "string" ? data.eventType as MarketHistoryEvent : "price_update",
+            transactionId: typeof data.transactionId === "string" ? data.transactionId : undefined,
+          } satisfies MarketHistoryPoint;
         }));
       },
       (error) => setNotice(error.message),
@@ -638,6 +1113,7 @@ export default function Home() {
       unsubscribeMarkets();
       unsubscribeOrders();
       unsubscribeTrades();
+      unsubscribeMarketHistory();
       unsubscribeBalances();
       unsubscribePublicHoldings();
       unsubscribeSuggestions();
@@ -788,7 +1264,7 @@ export default function Home() {
     }
 
     try {
-      const createdAt = Math.floor(event.timeStamp);
+      const createdAt = Math.floor(performance.timeOrigin + event.timeStamp);
       const marketRef = await addDoc(collection(db, "markets"), {
         name: cleanName,
         category: cleanCategory,
@@ -809,6 +1285,15 @@ export default function Home() {
         createdByName: accountName,
         createdAt,
         updatedAt: createdAt,
+      });
+      await addDoc(collection(db, "marketHistory"), {
+        marketId: marketRef.id,
+        timestamp: createdAt,
+        price: cleanPrice,
+        volume: 0,
+        quantity: 0,
+        eventType: "create",
+        transactionId: marketRef.id,
       });
 
       setSelectedAssetId(marketRef.id);
@@ -936,8 +1421,14 @@ export default function Home() {
     }
 
     const cleanQuantity = Math.max(1, Math.floor(dropQuantity));
-    const buyQuantity = Math.min(cleanQuantity, selectedAsset.remainingDropSupply);
+    const remainingUserLimit = Math.max(0, DROP_PURCHASE_LIMIT - selectedHolding.quantity);
+    const buyQuantity = Math.min(cleanQuantity, selectedAsset.remainingDropSupply, remainingUserLimit);
     const totalCost = buyQuantity * selectedAsset.dropPrice;
+
+    if (remainingUserLimit <= 0) {
+      setNotice(`Drop limit reached. Max ${DROP_PURCHASE_LIMIT} per user.`);
+      return;
+    }
 
     if (buyQuantity <= 0) {
       setNotice("Drop sold out.");
@@ -960,6 +1451,17 @@ export default function Home() {
     const nextHolding = applyTradeToHolding(selectedHolding, buyQuantity, selectedAsset.dropPrice);
     const nextRemainingSupply = selectedAsset.remainingDropSupply - buyQuantity;
     const nextStatus: MarketStatus = nextRemainingSupply <= 0 ? "trading" : "drop";
+    const historyTimestamp = Math.floor(performance.timeOrigin + event.timeStamp);
+    const historyEvent: MarketHistoryPoint = {
+      id: `drop-${historyTimestamp}-${selectedAsset.id}`,
+      marketId: selectedAsset.id,
+      timestamp: historyTimestamp,
+      price: selectedAsset.dropPrice,
+      volume: totalCost,
+      quantity: buyQuantity,
+      eventType: buyQuantity > 1 ? "bulk_drop_buy" : "drop_buy",
+      transactionId: `drop-${historyTimestamp}`,
+    };
 
     const batch = writeBatch(db);
 
@@ -1012,11 +1514,21 @@ export default function Home() {
       status: nextStatus,
       updatedAt: serverTimestamp(),
     });
+    batch.set(doc(collection(db, "marketHistory")), {
+      marketId: historyEvent.marketId,
+      timestamp: historyTimestamp,
+      price: historyEvent.price,
+      volume: historyEvent.volume,
+      quantity: historyEvent.quantity,
+      eventType: historyEvent.eventType,
+      transactionId: historyEvent.transactionId,
+    });
 
     await batch.commit();
 
     setCoins(nextCoins);
     setHoldings((current) => ({ ...current, [selectedAsset.id]: nextHolding }));
+    setMarketHistory((current) => dedupeHistoryPoints([...current, historyEvent]));
     setDropQuantity(1);
     setNotice(nextStatus === "trading" ? "Drop sold out." : `${buyQuantity} bought.`);
   }
@@ -1036,6 +1548,7 @@ export default function Home() {
 
     const ordersSnapshot = await getDocs(query(collection(db, "orders")));
     const tradesSnapshot = await getDocs(query(collection(db, "trades")));
+    const historySnapshot = await getDocs(query(collection(db, "marketHistory")));
     const batch = writeBatch(db);
 
     ordersSnapshot.docs
@@ -1045,6 +1558,9 @@ export default function Home() {
     tradesSnapshot.docs
       .filter((tradeDoc) => tradeDoc.data().assetId === assetId)
       .forEach((tradeDoc) => batch.delete(doc(db, "trades", tradeDoc.id)));
+    historySnapshot.docs
+      .filter((historyDoc) => historyDoc.data().marketId === assetId)
+      .forEach((historyDoc) => batch.delete(doc(db, "marketHistory", historyDoc.id)));
 
     batch.delete(doc(db, "markets", assetId));
     await batch.commit();
@@ -1167,6 +1683,7 @@ export default function Home() {
       holdingsSnapshot,
       balancesSnapshot,
       privateHoldingsSnapshot,
+      historySnapshot,
     ] = await Promise.all([
       getDocs(collection(db, "markets")),
       getDocs(collection(db, "orders")),
@@ -1174,12 +1691,14 @@ export default function Home() {
       getDocs(collection(db, "holdings")),
       getDocs(collection(db, "balances")),
       getDocs(collection(db, "users", authUser.uid, "holdings")),
+      getDocs(collection(db, "marketHistory")),
     ]);
     const batch = writeBatch(db);
 
     marketsSnapshot.docs.forEach((marketDoc) => batch.delete(doc(db, "markets", marketDoc.id)));
     ordersSnapshot.docs.forEach((orderDoc) => batch.delete(doc(db, "orders", orderDoc.id)));
     tradesSnapshot.docs.forEach((tradeDoc) => batch.delete(doc(db, "trades", tradeDoc.id)));
+    historySnapshot.docs.forEach((historyDoc) => batch.delete(doc(db, "marketHistory", historyDoc.id)));
     holdingsSnapshot.docs.forEach((holdingDoc) => batch.delete(doc(db, "holdings", holdingDoc.id)));
     privateHoldingsSnapshot.docs.forEach((holdingDoc) =>
       batch.delete(doc(db, "users", authUser.uid, "holdings", holdingDoc.id)),
@@ -1224,6 +1743,7 @@ export default function Home() {
     setAssets([]);
     setOrders([]);
     setTrades([]);
+    setMarketHistory([]);
     setHoldings({});
     setPublicHoldings({});
     setCoins(0);
@@ -1244,10 +1764,15 @@ export default function Home() {
   const selectedAssetOrderId = selectedAsset?.id ?? "";
   const buyOrders = selectedAsset ? getOrderBook(orders, selectedAssetOrderId, "buy") : [];
   const sellOrders = selectedAsset ? getOrderBook(orders, selectedAssetOrderId, "sell") : [];
-  const assetTrades = trades.filter((trade) => trade.assetId === selectedAssetOrderId).slice(0, 6);
+  const selectedAssetTrades = trades.filter((trade) => trade.assetId === selectedAssetOrderId);
+  const selectedAssetHistory = marketHistory.filter((point) => point.marketId === selectedAssetOrderId);
+  const assetTrades = selectedAssetTrades.slice(0, 6);
   const bestBid = buyOrders[0]?.limitPrice;
   const bestAsk = sellOrders[0]?.limitPrice;
   const selectedHolding = selectedAsset ? holdings[selectedAsset.id] ?? { quantity: 0, averagePrice: 0 } : { quantity: 0, averagePrice: 0 };
+  const selectedDropLimitRemaining = selectedAsset
+    ? Math.max(0, DROP_PURCHASE_LIMIT - selectedHolding.quantity)
+    : DROP_PURCHASE_LIMIT;
   const visibleSuggestions = suggestions
     .filter((suggestion) => {
       const queryText = surveySearch.trim().toLowerCase();
@@ -1299,6 +1824,47 @@ export default function Home() {
       detail: asset.name,
     })),
   ].slice(0, 4);
+  const portfolioTotalValue = portfolioAssets.reduce((sum, asset) => {
+    const holding = holdings[asset.id] ?? { quantity: 0, averagePrice: 0 };
+
+    return sum + holding.quantity * asset.lastPrice;
+  }, 0);
+  const portfolioSlices = portfolioAssets
+    .map((asset) => {
+      const holding = holdings[asset.id] ?? { quantity: 0, averagePrice: 0 };
+      const value = holding.quantity * asset.lastPrice;
+
+      return {
+        asset,
+        quantity: holding.quantity,
+        value,
+        percent: portfolioTotalValue ? (value / portfolioTotalValue) * 100 : 0,
+      };
+    })
+    .sort((a, b) => b.value - a.value);
+  const upcomingDrops: UpcomingDrop[] = assets
+    .filter((asset) => asset.status === "drop")
+    .slice(0, 3)
+    .map((asset, index) => {
+      const dayStart = new Date(now);
+      dayStart.setHours(9, 0, 0, 0);
+      let releaseAt = dayStart.getTime() + (index * 26 + 2) * 3_600_000;
+      while (releaseAt <= now) {
+        releaseAt += 3 * 86_400_000;
+      }
+      const remainingRatio = asset.remainingDropSupply / Math.max(1, asset.totalSupply);
+
+      return {
+        id: asset.id,
+        title: asset.name,
+        description: asset.description || asset.category,
+        releaseAt,
+        status: remainingRatio <= 0 ? "Sold Out" : index === 0 ? "Live Soon" : "Upcoming",
+        limit: DROP_PURCHASE_LIMIT,
+        remaining: asset.remainingDropSupply,
+        total: asset.totalSupply,
+      };
+    });
 
   async function placeOrder(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1322,7 +1888,7 @@ export default function Home() {
     const currentUserId = authUser.uid;
     const cleanQuantity = Math.max(1, Math.floor(quantity));
     const cleanLimit = Math.max(1, Math.floor(limitPrice));
-    const createdAt = Math.floor(event.timeStamp);
+    const createdAt = Math.floor(performance.timeOrigin + event.timeStamp);
 
     if (side === "buy" && cleanQuantity * cleanLimit > coins) {
       setNotice("Not enough coins.");
@@ -1481,6 +2047,21 @@ export default function Home() {
     }
 
     const latestTrade = nextTrades.at(-1);
+    const matchedQuantity = cleanQuantity - remaining;
+    const historyEvent: MarketHistoryPoint | null = latestTrade
+      ? {
+          id: `history-${createdAt}-${tradeAssetId}`,
+          marketId: tradeAssetId,
+          timestamp: createdAt,
+          price: latestTrade.price,
+          volume: nextTrades.reduce((sum, trade) => sum + trade.price * trade.quantity, 0),
+          quantity: matchedQuantity,
+          eventType: side === "buy"
+            ? matchedQuantity > 1 ? "bulk_buy" : "buy"
+            : matchedQuantity > 1 ? "bulk_sell" : "sell",
+          transactionId: `order-${createdAt}`,
+        }
+      : null;
     const nextVolume = selectedAsset.volume + nextTrades.reduce((sum, trade) => sum + trade.price * trade.quantity, 0);
     const nextVolatility = latestTrade
       ? calculateVolatility([
@@ -1494,7 +2075,12 @@ export default function Home() {
 
     const db = getFirebaseDb();
 
-    if (db) {
+    if (!db) {
+      setNotice("Database unavailable.");
+      return;
+    }
+
+    try {
       const batch = writeBatch(db);
 
       if (incoming.remaining > 0) {
@@ -1592,13 +2178,30 @@ export default function Home() {
           volatility: nextVolatility,
           updatedAt: serverTimestamp(),
         });
+        if (historyEvent) {
+          batch.set(doc(collection(db, "marketHistory")), {
+            marketId: historyEvent.marketId,
+            timestamp: historyEvent.timestamp,
+            price: historyEvent.price,
+            volume: historyEvent.volume,
+            quantity: historyEvent.quantity,
+            eventType: historyEvent.eventType,
+            transactionId: historyEvent.transactionId,
+          });
+        }
       }
 
       await batch.commit();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Trade failed.");
+      return;
     }
 
     setOrders(nextOrders.filter((order) => order.remaining > 0));
     setTrades([...nextTrades.reverse(), ...trades]);
+    if (historyEvent) {
+      setMarketHistory((current) => dedupeHistoryPoints([...current, historyEvent]));
+    }
     setHoldings(nextHoldings);
     setCoins(nextCoins);
     void saveHolding(tradeAssetId, nextHoldings[tradeAssetId] ?? { quantity: 0, averagePrice: 0 });
@@ -1616,7 +2219,6 @@ export default function Home() {
       ),
     );
 
-    const matchedQuantity = cleanQuantity - remaining;
     if (matchedQuantity > 0 && remaining > 0) {
       setNotice(`${matchedQuantity} matched. ${remaining} open.`);
     } else if (matchedQuantity > 0) {
@@ -1978,6 +2580,31 @@ export default function Home() {
             </div>
           ) : null}
 
+          {activeTab === "timing" ? (
+            <div className="space-y-5">
+              <div className="rounded-[2rem] border border-border bg-surface p-6 shadow-card">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                  <div>
+                    <h2 className="text-3xl font-black">Drops Timing</h2>
+                    <p className="mt-1 text-sm text-muted">Upcoming releases, countdowns, limits, and remaining supply.</p>
+                  </div>
+                  <span className="w-fit rounded-full bg-brand px-3 py-1 text-xs font-black">
+                    {upcomingDrops.length} queued
+                  </span>
+                </div>
+              </div>
+              <div className="grid gap-4 xl:grid-cols-3">
+                {upcomingDrops.length ? upcomingDrops.map((drop) => (
+                  <DropTimingCard key={drop.id} drop={drop} now={now} />
+                )) : (
+                  <p className="rounded-2xl bg-surface-warm px-4 py-3 text-sm text-muted">
+                    No upcoming drops yet. Create a drop market to schedule one.
+                  </p>
+                )}
+              </div>
+            </div>
+          ) : null}
+
           {activeTab === "trading" ? (
             <div className="rounded-[2rem] border border-border bg-surface p-6 shadow-card">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
@@ -2043,6 +2670,19 @@ export default function Home() {
             </div>
           ) : null}
 
+          {activeTab === "trading" && visibleAsset ? (
+            <MarketLineChart
+              asset={visibleAsset}
+              history={selectedAssetHistory}
+              trades={selectedAssetTrades}
+              range={chartRange}
+              mode={chartMode}
+              now={now}
+              onRangeChange={setChartRange}
+              onModeChange={setChartMode}
+            />
+          ) : null}
+
           {activeTab === "drop" || activeTab === "trading" ? (
           <div className="rounded-[2rem] border border-border bg-surface p-6 shadow-card">
             {visibleAsset ? (
@@ -2098,16 +2738,32 @@ export default function Home() {
                         value={dropQuantity}
                         onChange={(event) => setDropQuantity(Number(event.target.value))}
                         min={1}
-                        max={visibleAsset.remainingDropSupply}
+                        max={Math.min(visibleAsset.remainingDropSupply, selectedDropLimitRemaining)}
                         type="number"
                         className="mt-2 w-full rounded-2xl border border-border px-4 py-3 text-base outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/30"
                       />
                     </label>
                     <div className="rounded-2xl bg-surface-warm p-3 text-sm leading-6 text-muted">
                       <p>Price: {currency(visibleAsset.dropPrice)}</p>
-                      <p>Total: {currency(dropQuantity * visibleAsset.dropPrice)}</p>
+                      <p>Total: {currency(Math.min(dropQuantity, selectedDropLimitRemaining, visibleAsset.remainingDropSupply) * visibleAsset.dropPrice)}</p>
+                      <p>Limit: {DROP_PURCHASE_LIMIT} per user</p>
                       <p>Remaining: {visibleAsset.remainingDropSupply}</p>
                     </div>
+                  </div>
+                  <div className="mt-4 rounded-2xl border border-border p-3">
+                    <div className="flex justify-between text-xs font-bold uppercase tracking-[0.12em] text-quiet">
+                      <span>Available</span>
+                      <span>{((1 - visibleAsset.remainingDropSupply / Math.max(1, visibleAsset.totalSupply)) * 100).toFixed(0)}% sold</span>
+                    </div>
+                    <div className="mt-2 h-3 overflow-hidden rounded-full bg-surface-soft">
+                      <div
+                        className="h-full rounded-full bg-brand"
+                        style={{ width: `${(1 - visibleAsset.remainingDropSupply / Math.max(1, visibleAsset.totalSupply)) * 100}%` }}
+                      />
+                    </div>
+                    <p className="mt-2 text-sm font-bold text-muted">
+                      You can still buy {selectedDropLimitRemaining} from this drop.
+                    </p>
                   </div>
                   <button className="mt-4 w-full rounded-2xl bg-brand px-4 py-3 font-black text-foreground transition hover:-translate-y-0.5 hover:bg-brand-hover">
                     Buy from drop
@@ -2271,8 +2927,10 @@ export default function Home() {
           </div>
           ) : null}
           {activeTab === "portfolio" ? (
+          <>
+          <PortfolioDonut slices={portfolioSlices} />
           <div className="rounded-[2rem] border border-border bg-surface p-6 shadow-card">
-            <h2 className="text-2xl font-black">Portfolio</h2>
+            <h2 className="text-2xl font-black">Portfolio Holdings</h2>
             <div className="mt-5 space-y-3">
               {portfolioAssets.length ? portfolioAssets.map((asset) => {
                 const holding = holdings[asset.id] ?? { quantity: 0, averagePrice: 0 };
@@ -2297,6 +2955,7 @@ export default function Home() {
               )}
             </div>
           </div>
+          </>
           ) : null}
 
           {activeTab === "account" ? (
