@@ -111,14 +111,15 @@ type PortfolioSlice = {
 
 type UpcomingDrop = {
   id: string;
-  marketId: string;
+  suggestionId: string;
+  rank: number;
   title: string;
-  description: string;
+  category: string;
+  votes: number;
   releaseAt: number;
-  status: "Active" | "Scheduled" | "Sold Out";
+  status: "Dropping next" | "Scheduled";
   limit: number;
-  remaining: number;
-  total: number;
+  plannedSupply: number;
   price: number;
 };
 
@@ -171,6 +172,8 @@ const levelCopy: Record<
 
 const STARTING_COINS = 0;
 const DROP_PURCHASE_LIMIT_PERCENT = 0.05;
+const DROP_BATCH_SIZE = 3;
+const DROP_CYCLE_MS = 60 * 1000;
 const chartRanges: ChartRange[] = ["1D", "1W", "1M", "3M", "6M", "YTD", "1Y", "ALL"];
 
 const tabs: { id: AppTab; label: string; mark: string }[] = [
@@ -301,16 +304,25 @@ function dropPurchaseLimit(asset: Pick<Asset, "totalSupply">) {
   return Math.max(1, Math.floor(asset.totalSupply * DROP_PURCHASE_LIMIT_PERCENT));
 }
 
+function plannedDropSupply(suggestion: Pick<Suggestion, "upvotes">) {
+  return Math.max(100, 500 + suggestion.upvotes * 50);
+}
+
+function plannedDropPrice(suggestion: Pick<Suggestion, "upvotes">) {
+  return Math.max(1, 10 + suggestion.upvotes);
+}
+
+function nextHourlyDropTime(timestamp: number) {
+  return Math.floor(timestamp / DROP_CYCLE_MS) * DROP_CYCLE_MS + DROP_CYCLE_MS;
+}
+
 function formatClock(ms: number) {
   const safeMs = Math.max(0, ms);
-  const days = Math.floor(safeMs / 86_400_000);
-  const hours = Math.floor((safeMs % 86_400_000) / 3_600_000);
+  const hours = Math.floor(safeMs / 3_600_000);
   const minutes = Math.floor((safeMs % 3_600_000) / 60_000);
   const seconds = Math.floor((safeMs % 60_000) / 1_000);
 
-  return `${days}d ${hours.toString().padStart(2, "0")}h ${minutes.toString().padStart(2, "0")}m ${seconds
-    .toString()
-    .padStart(2, "0")}s`;
+  return `${hours}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
 }
 
 function formatShortDate(timestamp: number) {
@@ -649,73 +661,91 @@ function PortfolioDonut({ slices }: { slices: PortfolioSlice[] }) {
   );
 }
 
-function DropTimingCard({
-  drop,
+function DropTimerBadge({
+  nextDropTime,
   now,
-  isSelected,
-  onSelect,
+  scheduledCount,
 }: {
-  drop: UpcomingDrop;
+  nextDropTime: number;
   now: number;
-  isSelected: boolean;
-  onSelect: () => void;
+  scheduledCount: number;
 }) {
-  const remainingMs = drop.releaseAt - now;
-  const soldPercent = Math.min(100, Math.max(0, ((drop.total - drop.remaining) / Math.max(1, drop.total)) * 100));
-  const isScheduled = drop.status === "Scheduled";
-
   return (
     <button
       type="button"
-      onClick={onSelect}
-      className={`rounded-[2rem] border bg-surface p-5 text-left shadow-card transition hover:-translate-y-0.5 hover:shadow-lift ${
-        isSelected ? "border-brand ring-4 ring-brand/25" : "border-border"
-      }`}
+      className="w-full rounded-2xl border border-brand/70 bg-surface px-4 py-3 text-left shadow-card transition hover:-translate-y-0.5 hover:shadow-lift sm:w-auto"
+      title="Drop Timer"
     >
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.14em] text-muted">Drop Timer</p>
+          <p className="mt-1 font-mono text-2xl font-black text-foreground">{formatClock(nextDropTime - now)}</p>
+        </div>
+        <span className="rounded-full bg-brand px-3 py-1 text-xs font-black text-foreground">
+          {scheduledCount}/{DROP_BATCH_SIZE}
+        </span>
+      </div>
+    </button>
+  );
+}
+
+function DropTimingCard({
+  drop,
+  now,
+  onRemove,
+}: {
+  drop: UpcomingDrop;
+  now: number;
+  onRemove: () => void;
+}) {
+  const remainingMs = drop.releaseAt - now;
+
+  return (
+    <div className="group relative rounded-[2rem] border border-border bg-surface p-5 text-left shadow-card transition hover:-translate-y-0.5 hover:border-brand hover:shadow-lift">
+      <button
+        type="button"
+        onClick={onRemove}
+        className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full border border-border bg-surface text-sm font-black text-muted opacity-0 shadow-card transition hover:border-danger hover:text-danger group-hover:opacity-100"
+        aria-label={`Remove ${drop.title} from this drop cycle`}
+        title="Remove from this drop cycle"
+      >
+        X
+      </button>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-xl font-black">{drop.title}</p>
-          <p className="mt-1 text-sm leading-6 text-muted">{drop.description}</p>
+          <div className="flex flex-wrap items-center gap-2 pr-9">
+            <span className="rounded-full bg-brand px-2 py-1 text-xs font-black text-foreground">#{drop.rank}</span>
+            <p className="truncate text-xl font-black">{drop.title}</p>
+          </div>
+          <p className="mt-2 text-sm font-bold text-muted">{drop.category}</p>
         </div>
-        <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-black ${
-          isScheduled ? "bg-foreground text-white" : "bg-brand text-foreground"
-        }`}>
+        <span className="mt-9 shrink-0 rounded-full bg-foreground px-3 py-1 text-xs font-black text-white sm:mt-0">
           {drop.status}
         </span>
       </div>
-      {isScheduled ? (
-        <div className="mt-5 rounded-3xl bg-foreground p-4 text-white">
-          <p className="text-xs font-bold uppercase tracking-[0.14em] text-white/60">Drop unlocks in</p>
-          <p className="mt-2 font-mono text-2xl font-black">{formatClock(remainingMs)}</p>
-        </div>
-      ) : (
-        <div className="mt-5 rounded-3xl bg-brand p-4">
-          <p className="text-xs font-bold uppercase tracking-[0.14em] text-foreground/60">Live price</p>
-          <p className="mt-2 text-2xl font-black">{currency(drop.price)}</p>
-        </div>
-      )}
+      <div className="mt-5 rounded-3xl bg-foreground p-4 text-white">
+        <p className="text-xs font-bold uppercase tracking-[0.14em] text-white/60">Drop unlocks in</p>
+        <p className="mt-2 font-mono text-2xl font-black">{formatClock(remainingMs)}</p>
+      </div>
       <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
         <div className="rounded-2xl bg-surface-warm p-3">
-          <p className="text-xs font-bold uppercase tracking-[0.12em] text-quiet">
-            {isScheduled ? "Release" : "Status"}
-          </p>
-          <p className="mt-1 font-bold">{isScheduled ? formatShortDate(drop.releaseAt) : "Available now"}</p>
+          <p className="text-xs font-bold uppercase tracking-[0.12em] text-quiet">Votes</p>
+          <p className="mt-1 font-bold">{drop.votes}</p>
         </div>
         <div className="rounded-2xl bg-surface-warm p-3">
-          <p className="text-xs font-bold uppercase tracking-[0.12em] text-quiet">Limit</p>
+          <p className="text-xs font-bold uppercase tracking-[0.12em] text-quiet">Scheduled</p>
+          <p className="mt-1 font-bold">{formatShortDate(drop.releaseAt)}</p>
+        </div>
+        <div className="rounded-2xl bg-surface-warm p-3">
+          <p className="text-xs font-bold uppercase tracking-[0.12em] text-quiet">Planned supply</p>
+          <p className="mt-1 font-bold">{drop.plannedSupply}</p>
+        </div>
+        <div className="rounded-2xl bg-surface-warm p-3">
+          <p className="text-xs font-bold uppercase tracking-[0.12em] text-quiet">Purchase limit</p>
           <p className="mt-1 font-bold">{drop.limit} per user</p>
         </div>
       </div>
-      <div className="mt-4">
-        <div className="flex justify-between text-xs font-bold uppercase tracking-[0.12em] text-quiet">
-          <span>{drop.remaining} left</span>
-          <span>{soldPercent.toFixed(0)}% sold</span>
-        </div>
-        <div className="mt-2 h-3 overflow-hidden rounded-full bg-surface-soft">
-          <div className="h-full rounded-full bg-brand" style={{ width: `${soldPercent}%` }} />
-        </div>
-      </div>
-    </button>
+    </div>
   );
 }
 
@@ -856,6 +886,9 @@ export default function Home() {
   const [chartRange, setChartRange] = useState<ChartRange>("1M");
   const [chartMode, setChartMode] = useState<ChartMode>("value");
   const [now, setNow] = useState(() => Date.now());
+  const [nextDropTime, setNextDropTime] = useState(() => nextHourlyDropTime(Date.now()));
+  const [skippedDropSuggestionIds, setSkippedDropSuggestionIds] = useState<string[]>([]);
+  const [processingDropCycle, setProcessingDropCycle] = useState(false);
   const accountName = authUser ? userLabel(authUser) : "You";
 
   useEffect(() => {
@@ -1873,32 +1906,117 @@ export default function Home() {
       };
     })
     .sort((a, b) => b.value - a.value);
-  const upcomingDrops: UpcomingDrop[] = assets
-    .filter((asset) => asset.status === "drop")
-    .slice(0, 3)
-    .map((asset, index) => {
-      const dayStart = new Date(now);
-      dayStart.setHours(9, 0, 0, 0);
-      let releaseAt = dayStart.getTime() + (index * 26 + 2) * 3_600_000;
-      while (releaseAt <= now) {
-        releaseAt += 3 * 86_400_000;
-      }
-      const remainingRatio = asset.remainingDropSupply / Math.max(1, asset.totalSupply);
-      const isActiveDrop = index === 0 && asset.remainingDropSupply > 0;
+  const rankedDropSuggestions = [...suggestions]
+    .filter((suggestion) => suggestion.name.trim())
+    .sort((a, b) => b.upvotes - a.upvotes || a.createdAt - b.createdAt);
+  const scheduledSuggestions = rankedDropSuggestions
+    .filter((suggestion) => !skippedDropSuggestionIds.includes(suggestion.id))
+    .slice(0, DROP_BATCH_SIZE);
+  const upcomingDrops: UpcomingDrop[] = scheduledSuggestions.map((suggestion, index) => {
+    const plannedSupply = plannedDropSupply(suggestion);
 
-      return {
-        id: asset.id,
-        marketId: asset.id,
-        title: asset.name,
-        description: asset.description || asset.category,
-        releaseAt,
-        status: remainingRatio <= 0 ? "Sold Out" : isActiveDrop ? "Active" : "Scheduled",
-        limit: dropPurchaseLimit(asset),
-        remaining: asset.remainingDropSupply,
-        total: asset.totalSupply,
-        price: asset.dropPrice,
-      };
-    });
+    return {
+      id: `scheduled-${suggestion.id}`,
+      suggestionId: suggestion.id,
+      rank: rankedDropSuggestions.findIndex((item) => item.id === suggestion.id) + 1,
+      title: suggestion.name,
+      category: suggestion.category,
+      votes: suggestion.upvotes,
+      releaseAt: nextDropTime,
+      status: index === 0 ? "Dropping next" : "Scheduled",
+      limit: Math.max(1, Math.floor(plannedSupply * DROP_PURCHASE_LIMIT_PERCENT)),
+      plannedSupply,
+      price: plannedDropPrice(suggestion),
+    };
+  });
+
+  async function launchScheduledDrops(drops: UpcomingDrop[], cycleDropTime: number) {
+    if (!authUser || !drops.length || processingDropCycle) {
+      return;
+    }
+
+    const db = getFirebaseDb();
+
+    if (!db) {
+      setNotice("Database unavailable.");
+      return;
+    }
+
+    setProcessingDropCycle(true);
+
+    try {
+      const batch = writeBatch(db);
+      const createdMarketIds: string[] = [];
+
+      drops.forEach((drop) => {
+        const marketRef = doc(db, "markets", `drop_${cycleDropTime}_${drop.suggestionId}`);
+        const historyRef = doc(db, "marketHistory", `drop_${cycleDropTime}_${drop.suggestionId}`);
+
+        createdMarketIds.push(marketRef.id);
+        batch.set(marketRef, {
+          name: drop.title,
+          category: drop.category,
+          level: "community",
+          volatility: 0,
+          lastPrice: drop.price,
+          previousPrice: drop.price,
+          volume: 0,
+          supply: drop.plannedSupply,
+          totalSupply: drop.plannedSupply,
+          dropPrice: drop.price,
+          remainingDropSupply: drop.plannedSupply,
+          status: "drop",
+          description: `Dropped from Survey with ${drop.votes} votes.`,
+          signal: "Survey ranked",
+          color: "#facc15",
+          createdBy: authUser.uid,
+          createdByName: accountName,
+          createdAt: cycleDropTime,
+          updatedAt: cycleDropTime,
+        });
+        batch.set(historyRef, {
+          marketId: marketRef.id,
+          timestamp: cycleDropTime,
+          price: drop.price,
+          volume: 0,
+          quantity: 0,
+          eventType: "create",
+          transactionId: marketRef.id,
+        });
+        batch.delete(doc(db, "suggestions", drop.suggestionId));
+      });
+
+      await batch.commit();
+
+      setSkippedDropSuggestionIds([]);
+      setSelectedAssetId(createdMarketIds[0] ?? "");
+      setLimitPrice(drops[0]?.price ?? 1);
+      setNotice(`${drops.length} survey drops are live.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Drop launch failed.");
+    } finally {
+      setProcessingDropCycle(false);
+    }
+  }
+
+  useEffect(() => {
+    if (now < nextDropTime || processingDropCycle) {
+      return;
+    }
+
+    const dropsToLaunch = upcomingDrops;
+    const cycleDropTime = nextDropTime;
+    const followingDropTime = nextHourlyDropTime(now);
+
+    setNextDropTime(followingDropTime);
+    setSkippedDropSuggestionIds([]);
+
+    if (dropsToLaunch.length) {
+      void launchScheduledDrops(dropsToLaunch, cycleDropTime);
+    } else {
+      setNotice("No eligible survey events for this drop cycle.");
+    }
+  }, [now, nextDropTime, processingDropCycle, upcomingDrops]);
 
   async function placeOrder(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -2311,6 +2429,9 @@ export default function Home() {
                   Trade the Hype.
                 </h1>
               </div>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <DropTimerBadge nextDropTime={nextDropTime} now={now} scheduledCount={upcomingDrops.length} />
+              </div>
             </div>
           </header>
 
@@ -2579,10 +2700,10 @@ export default function Home() {
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                   <div>
                     <h2 className="text-3xl font-black">Drops</h2>
-                    <p className="mt-1 text-sm text-muted">Active drops and scheduled releases in one place.</p>
+                    <p className="mt-1 text-sm text-muted">The top Survey events keep racing until the hourly timer hits zero.</p>
                   </div>
                   <span className="w-fit rounded-full bg-brand px-3 py-1 text-xs font-black">
-                    {upcomingDrops.filter((drop) => drop.status === "Active").length} active
+                    {formatClock(nextDropTime - now)}
                   </span>
                 </div>
               </div>
@@ -2592,22 +2713,68 @@ export default function Home() {
                     key={drop.id}
                     drop={drop}
                     now={now}
-                    isSelected={selectedAsset?.id === drop.marketId}
-                    onSelect={() => {
-                      if (drop.status !== "Active") {
-                        setNotice(`${drop.title} is scheduled for ${formatShortDate(drop.releaseAt)}.`);
-                        return;
-                      }
-                      setSelectedAssetId(drop.marketId);
-                      setLimitPrice(drop.price);
+                    onRemove={() => {
+                      setSkippedDropSuggestionIds((current) =>
+                        current.includes(drop.suggestionId) ? current : [...current, drop.suggestionId],
+                      );
+                      setNotice(`${drop.title} skipped for this drop cycle.`);
                     }}
                   />
                 )) : (
                   <p className="rounded-2xl bg-surface-warm px-4 py-3 text-sm text-muted">
-                    No drops yet. Create a drop market to schedule one.
+                    No eligible survey events yet. Suggestions with votes will fill the next hourly drop batch.
                   </p>
                 )}
               </div>
+              {activeDrops.length ? (
+                <div className="rounded-[2rem] border border-border bg-surface p-6 shadow-card">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                    <div>
+                      <h3 className="text-2xl font-black">Live Drops</h3>
+                      <p className="mt-1 text-sm text-muted">Recently launched drops are available to buy below.</p>
+                    </div>
+                    <span className="w-fit rounded-full bg-brand px-3 py-1 text-xs font-black">
+                      {activeDrops.length} live
+                    </span>
+                  </div>
+                  <div className="mt-5 grid gap-3 lg:grid-cols-2">
+                    {activeDrops.map((asset) => (
+                      <button
+                        key={asset.id}
+                        onClick={() => {
+                          setSelectedAssetId(asset.id);
+                          setLimitPrice(asset.lastPrice);
+                        }}
+                        className={`rounded-3xl border bg-surface-warm p-4 text-left transition hover:border-brand ${
+                          selectedAsset?.id === asset.id ? "border-brand ring-4 ring-brand/25" : "border-border"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="truncate font-black">{asset.name}</p>
+                            <p className="mt-1 text-sm text-muted">{asset.category}</p>
+                          </div>
+                          <span className="rounded-full bg-brand px-2 py-1 text-xs font-black">Live</span>
+                        </div>
+                        <div className="mt-4 grid grid-cols-3 gap-3 text-sm">
+                          <div>
+                            <p className="text-xs font-bold uppercase tracking-[0.12em] text-quiet">Price</p>
+                            <p className="font-bold">{currency(asset.dropPrice)}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs font-bold uppercase tracking-[0.12em] text-quiet">Left</p>
+                            <p className="font-bold">{asset.remainingDropSupply}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs font-bold uppercase tracking-[0.12em] text-quiet">Limit</p>
+                            <p className="font-bold">{dropPurchaseLimit(asset)}</p>
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
           ) : null}
 
