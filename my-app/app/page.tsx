@@ -20,7 +20,7 @@ type MarketLevel = "admin" | "community" | "private";
 type MarketStatus = "drop" | "trading";
 type Side = "buy" | "sell";
 type OrderStatus = "open" | "filled" | "partially_filled";
-type AppTab = "markets" | "create" | "drop" | "trading" | "portfolio" | "account";
+type AppTab = "markets" | "suggest" | "survey" | "create" | "drop" | "trading" | "portfolio" | "account";
 
 type Asset = {
   id: string;
@@ -85,6 +85,18 @@ type PublicHolding = {
   averagePrice: number;
 };
 
+type Suggestion = {
+  id: string;
+  name: string;
+  category: string;
+  reason: string;
+  suggestedBy: string;
+  suggestedByName: string;
+  upvotes: number;
+  voters: Record<string, boolean>;
+  createdAt: number;
+};
+
 declare global {
   interface Window {
     buzzlyAddCoins?: (amount: number) => Promise<number>;
@@ -114,6 +126,8 @@ const STARTING_COINS = 0;
 
 const tabs: { id: AppTab; label: string; mark: string }[] = [
   { id: "markets", label: "Markets", mark: "M" },
+  { id: "suggest", label: "Suggest", mark: "S" },
+  { id: "survey", label: "Survey", mark: "V" },
   { id: "create", label: "Create", mark: "+" },
   { id: "drop", label: "Drop", mark: "D" },
   { id: "trading", label: "Trade", mark: "T" },
@@ -262,6 +276,7 @@ export default function Home() {
   const [holdings, setHoldings] = useState<Record<string, Holding>>({});
   const [publicBalances, setPublicBalances] = useState<Record<string, PublicBalance>>({});
   const [publicHoldings, setPublicHoldings] = useState<Record<string, Holding>>({});
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [savedUserCoins, setSavedUserCoins] = useState<number | null>(null);
   const [selectedAssetId, setSelectedAssetId] = useState("");
   const [side, setSide] = useState<Side>("buy");
@@ -275,6 +290,10 @@ export default function Home() {
   const [marketPrice, setMarketPrice] = useState(1);
   const [marketSupply, setMarketSupply] = useState(1000);
   const [marketColor, setMarketColor] = useState("#facc15");
+  const [suggestionName, setSuggestionName] = useState("");
+  const [suggestionCategory, setSuggestionCategory] = useState("Event");
+  const [suggestionReason, setSuggestionReason] = useState("");
+  const [surveySearch, setSurveySearch] = useState("");
   const [dropQuantity, setDropQuantity] = useState(1);
   const [activeTab, setActiveTab] = useState<AppTab>("markets");
   const accountName = authUser ? userLabel(authUser) : "You";
@@ -503,12 +522,38 @@ export default function Home() {
       (error) => setNotice(error.message),
     );
 
+    const unsubscribeSuggestions = onSnapshot(
+      query(collection(db, "suggestions"), orderBy("upvotes", "desc")),
+      (snapshot) => {
+        setSuggestions(snapshot.docs.map((suggestionDoc) => {
+          const data = suggestionDoc.data();
+          const voters = data.voters && typeof data.voters === "object"
+            ? data.voters as Record<string, boolean>
+            : {};
+
+          return {
+            id: suggestionDoc.id,
+            name: typeof data.name === "string" ? data.name : "",
+            category: typeof data.category === "string" ? data.category : "",
+            reason: typeof data.reason === "string" ? data.reason : "",
+            suggestedBy: typeof data.suggestedBy === "string" ? data.suggestedBy : "",
+            suggestedByName: typeof data.suggestedByName === "string" ? data.suggestedByName : "",
+            upvotes: typeof data.upvotes === "number" ? data.upvotes : 0,
+            voters,
+            createdAt: timestampMillis(data.createdAt),
+          } satisfies Suggestion;
+        }));
+      },
+      (error) => setNotice(error.message),
+    );
+
     return () => {
       unsubscribeMarkets();
       unsubscribeOrders();
       unsubscribeTrades();
       unsubscribeBalances();
       unsubscribePublicHoldings();
+      unsubscribeSuggestions();
     };
   }, [authUser, savedUserCoins]);
 
@@ -689,6 +734,80 @@ export default function Home() {
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Market create failed.");
     }
+  }
+
+  async function suggestDrop(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!authUser) {
+      setNotice("Sign in required.");
+      return;
+    }
+
+    const db = getFirebaseDb();
+
+    if (!db) {
+      setNotice("Database unavailable.");
+      return;
+    }
+
+    const cleanName = suggestionName.trim();
+    const cleanCategory = suggestionCategory.trim();
+    const cleanReason = suggestionReason.trim();
+
+    if (!cleanName || !cleanCategory) {
+      setNotice("Suggestion needs a name and category.");
+      return;
+    }
+
+    await addDoc(collection(db, "suggestions"), {
+      name: cleanName,
+      category: cleanCategory,
+      reason: cleanReason,
+      suggestedBy: authUser.uid,
+      suggestedByName: accountName,
+      upvotes: 1,
+      voters: { [authUser.uid]: true },
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+
+    setSuggestionName("");
+    setSuggestionCategory("Event");
+    setSuggestionReason("");
+    setActiveTab("survey");
+    setNotice("Suggestion added to the survey.");
+  }
+
+  async function upvoteSuggestion(suggestion: Suggestion) {
+    if (!authUser) {
+      setNotice("Sign in required.");
+      return;
+    }
+
+    if (suggestion.voters[authUser.uid]) {
+      setNotice("You already upvoted that suggestion.");
+      return;
+    }
+
+    const db = getFirebaseDb();
+
+    if (!db) {
+      setNotice("Database unavailable.");
+      return;
+    }
+
+    await setDoc(
+      doc(db, "suggestions", suggestion.id),
+      {
+        upvotes: suggestion.upvotes + 1,
+        voters: { ...suggestion.voters, [authUser.uid]: true },
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true },
+    );
+
+    setNotice(`Upvoted ${suggestion.name}.`);
   }
 
   async function buyFromDrop(event: FormEvent<HTMLFormElement>) {
@@ -1024,6 +1143,20 @@ export default function Home() {
   const bestBid = buyOrders[0]?.limitPrice;
   const bestAsk = sellOrders[0]?.limitPrice;
   const selectedHolding = selectedAsset ? holdings[selectedAsset.id] ?? { quantity: 0, averagePrice: 0 } : { quantity: 0, averagePrice: 0 };
+  const visibleSuggestions = suggestions
+    .filter((suggestion) => {
+      const queryText = surveySearch.trim().toLowerCase();
+
+      if (!queryText) {
+        return true;
+      }
+
+      return [suggestion.name, suggestion.category, suggestion.reason, suggestion.suggestedByName]
+        .join(" ")
+        .toLowerCase()
+        .includes(queryText);
+    })
+    .sort((a, b) => b.upvotes - a.upvotes || b.createdAt - a.createdAt);
   const change = selectedAsset && selectedAsset.previousPrice
     ? ((selectedAsset.lastPrice - selectedAsset.previousPrice) / selectedAsset.previousPrice) * 100
     : 0;
@@ -1493,9 +1626,126 @@ export default function Home() {
             </button>
           </form>
           ) : null}
+
+          {activeTab === "suggest" ? (
+          <form onSubmit={suggestDrop} className="rounded-lg border border-[#e5e7eb] bg-white p-4 shadow-sm">
+            <h2 className="text-lg font-bold">Suggest a Drop</h2>
+            <p className="mt-2 text-sm leading-6 text-[#52525b]">
+              Submit a new hype market idea. Popular suggestions can become community verified drops.
+            </p>
+            <div className="mt-4 grid gap-3">
+              <label className="text-sm font-semibold">
+                Drop name
+                <input
+                  value={suggestionName}
+                  onChange={(event) => setSuggestionName(event.target.value)}
+                  placeholder="GTA 6 trailer hype"
+                  className="mt-2 w-full rounded-md border border-[#e5e7eb] px-3 py-2 outline-none focus:border-[#0a0a0a]"
+                />
+              </label>
+              <label className="text-sm font-semibold">
+                Category
+                <select
+                  value={suggestionCategory}
+                  onChange={(event) => setSuggestionCategory(event.target.value)}
+                  className="mt-2 w-full rounded-md border border-[#e5e7eb] bg-white px-3 py-2 outline-none focus:border-[#0a0a0a]"
+                >
+                  {["Event", "Product", "Music", "Public Figure", "Sports", "Meme", "Private"].map((category) => (
+                    <option key={category} value={category}>
+                      {category}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-sm font-semibold">
+                Why should this be a drop?
+                <textarea
+                  value={suggestionReason}
+                  onChange={(event) => setSuggestionReason(event.target.value)}
+                  placeholder="People are already talking about it, and the hype could move fast."
+                  rows={4}
+                  className="mt-2 w-full resize-none rounded-md border border-[#e5e7eb] px-3 py-2 outline-none focus:border-[#0a0a0a]"
+                />
+              </label>
+            </div>
+            <button className="mt-4 w-full rounded-md bg-[#0a0a0a] px-4 py-3 font-bold text-white transition hover:bg-[#18181b]">
+              Submit suggestion
+            </button>
+            <p className="mt-3 rounded-md bg-[#fef9c3] p-3 text-sm font-semibold leading-6 text-[#713f12]">
+              {notice}
+            </p>
+          </form>
+          ) : null}
         </aside>
 
         <section className="space-y-5">
+          {activeTab === "survey" ? (
+            <div className="rounded-lg border border-[#e5e7eb] bg-white p-4 shadow-sm">
+              <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+                <div>
+                  <h2 className="text-lg font-bold">Survey Suggestions</h2>
+                  <p className="mt-2 text-sm leading-6 text-[#52525b]">
+                    Search community ideas and upvote the drops you want listed next. Results are sorted by popularity.
+                  </p>
+                </div>
+                <label className="w-full text-sm font-semibold md:max-w-sm">
+                  Search
+                  <input
+                    value={surveySearch}
+                    onChange={(event) => setSurveySearch(event.target.value)}
+                    placeholder="Search by name, category, or creator"
+                    className="mt-2 w-full rounded-md border border-[#e5e7eb] px-3 py-2 outline-none focus:border-[#0a0a0a]"
+                  />
+                </label>
+              </div>
+
+              <div className="mt-4 grid gap-3">
+                {visibleSuggestions.length ? visibleSuggestions.map((suggestion, index) => {
+                  const alreadyVoted = Boolean(authUser && suggestion.voters[authUser.uid]);
+
+                  return (
+                    <div key={suggestion.id} className="rounded-md border border-[#e5e7eb] p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded-full bg-[#fef08a] px-2 py-1 text-xs font-black text-[#713f12]">
+                              #{index + 1}
+                            </span>
+                            <h3 className="truncate text-lg font-bold">{suggestion.name}</h3>
+                            <span className="rounded-full bg-[#fefce8] px-2 py-1 text-xs font-bold text-[#52525b]">
+                              {suggestion.category}
+                            </span>
+                          </div>
+                          <p className="mt-2 text-sm leading-6 text-[#52525b]">
+                            {suggestion.reason || "No reason added."}
+                          </p>
+                          <p className="mt-2 text-xs font-semibold uppercase tracking-[0.12em] text-[#71717a]">
+                            Suggested by {suggestion.suggestedByName || "someone"}
+                          </p>
+                        </div>
+                        <div className="shrink-0 text-left sm:text-right">
+                          <p className="text-3xl font-black">{suggestion.upvotes}</p>
+                          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#71717a]">Upvotes</p>
+                          <button
+                            onClick={() => void upvoteSuggestion(suggestion)}
+                            disabled={alreadyVoted}
+                            className="mt-3 rounded-md bg-[#0a0a0a] px-4 py-2 text-sm font-bold text-white transition hover:bg-[#18181b] disabled:cursor-not-allowed disabled:bg-[#d4d4d8]"
+                          >
+                            {alreadyVoted ? "Voted" : "Upvote"}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }) : (
+                  <p className="rounded-md bg-[#fefce8] px-3 py-3 text-sm text-[#52525b]">
+                    No suggestions found.
+                  </p>
+                )}
+              </div>
+            </div>
+          ) : null}
+
           {activeTab === "markets" && assets.length ? (
             <div className="grid gap-3 sm:grid-cols-2">
               {assets.map((asset) => {
