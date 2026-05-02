@@ -159,40 +159,40 @@ function AuthScreen({
   const configMissing = authReady && !firebaseConfigIsReady;
 
   return (
-    <main className="min-h-screen bg-[#f7f3ea] text-[#1f2933]">
+    <main className="min-h-screen bg-[#f8fafc] text-[#0a0a0a]">
       <section className="mx-auto grid min-h-screen max-w-7xl items-center gap-8 px-5 py-8 lg:grid-cols-[1.05fr_0.95fr]">
         <div>
-          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#8b5d33]">Buzzly accounts</p>
-          <h1 className="mt-3 max-w-3xl text-4xl font-bold tracking-normal text-[#16202a] md:text-6xl">
+          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#ca8a04]">Buzzly accounts</p>
+          <h1 className="mt-3 max-w-3xl text-4xl font-bold tracking-normal text-[#0a0a0a] md:text-6xl">
             Sign in.
           </h1>
         </div>
 
-        <div className="rounded-lg border border-[#d9d2c3] bg-white p-5 shadow-sm md:p-6">
-          <div className="rounded-md bg-[#faf7ef] p-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#8b5d33]">Account access</p>
+        <div className="rounded-lg border border-[#e5e7eb] bg-white p-5 shadow-sm md:p-6">
+          <div className="rounded-md bg-[#fefce8] p-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#ca8a04]">Account access</p>
             <h2 className="mt-2 text-2xl font-bold">Continue with Google</h2>
           </div>
 
           <button
             onClick={onSignIn}
             disabled={!authReady || configMissing}
-            className="mt-5 flex w-full items-center justify-center gap-3 rounded-md bg-[#1f2933] px-4 py-3 font-bold text-white transition hover:bg-[#354353] disabled:cursor-not-allowed disabled:bg-[#9aa3ad]"
+            className="mt-5 flex w-full items-center justify-center gap-3 rounded-md bg-[#0a0a0a] px-4 py-3 font-bold text-white transition hover:bg-[#18181b] disabled:cursor-not-allowed disabled:bg-[#d4d4d8]"
           >
-            <span className="flex h-7 w-7 items-center justify-center rounded bg-white text-sm font-bold text-[#1f2933]">
+            <span className="flex h-7 w-7 items-center justify-center rounded bg-white text-sm font-bold text-[#0a0a0a]">
               G
             </span>
             {authReady ? "Sign in with Google" : "Loading Firebase"}
           </button>
 
           {configMissing ? (
-            <div className="mt-4 rounded-md bg-[#fff7ed] p-3 text-sm font-semibold leading-6 text-[#9a3412]">
+            <div className="mt-4 rounded-md bg-[#fef3c7] p-3 text-sm font-semibold leading-6 text-[#713f12]">
               Firebase is not configured yet. Add your project values to `.env.local`, then restart the dev server.
             </div>
           ) : null}
 
           {authError ? (
-            <div className="mt-4 rounded-md bg-[#fff1ee] p-3 text-sm font-semibold leading-6 text-[#b42318]">
+            <div className="mt-4 rounded-md bg-[#fef2f2] p-3 text-sm font-semibold leading-6 text-[#dc2626]">
               {authError}
             </div>
           ) : null}
@@ -221,7 +221,7 @@ export default function Home() {
   const [marketCategory, setMarketCategory] = useState("");
   const [marketLevel, setMarketLevel] = useState<MarketLevel>("community");
   const [marketPrice, setMarketPrice] = useState(1);
-  const [marketColor, setMarketColor] = useState("#1f2933");
+  const [marketColor, setMarketColor] = useState("#facc15");
   const accountName = authUser ? userLabel(authUser) : "You";
 
   useEffect(() => {
@@ -305,7 +305,7 @@ export default function Home() {
             supply: typeof data.supply === "number" ? data.supply : 0,
             description: typeof data.description === "string" ? data.description : "",
             signal: typeof data.signal === "string" ? data.signal : "",
-            color: typeof data.color === "string" ? data.color : "#1f2933",
+            color: typeof data.color === "string" ? data.color : "#facc15",
           } satisfies Asset;
         });
 
@@ -781,26 +781,26 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-screen bg-[#f7f3ea] text-[#1f2933]">
-      <section className="border-b border-[#d9d2c3] bg-[#faf7ef]">
+    <main className="min-h-screen bg-[#f8fafc] text-[#0a0a0a]">
+      <section className="border-b border-[#e5e7eb] bg-[#fefce8]">
         <div className="mx-auto flex max-w-7xl flex-col gap-6 px-5 py-6 md:flex-row md:items-center md:justify-between">
           <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#8b5d33]">Buzzly</p>
-            <h1 className="mt-2 text-4xl font-bold tracking-normal text-[#16202a] md:text-5xl">
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#ca8a04]">Buzzly</p>
+            <h1 className="mt-2 text-4xl font-bold tracking-normal text-[#0a0a0a] md:text-5xl">
               Trade the hype.
             </h1>
           </div>
-          <div className="grid min-w-64 gap-3 rounded-lg border border-[#d9d2c3] bg-white p-4 shadow-sm sm:grid-cols-2 md:min-w-[22rem]">
+          <div className="grid min-w-64 gap-3 rounded-lg border border-[#e5e7eb] bg-white p-4 shadow-sm sm:grid-cols-2 md:min-w-[22rem]">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#7d8790]">Coins</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#71717a]">Coins</p>
               <p className="mt-1 text-2xl font-bold">{coinsReady ? currency(coins) : "Loading"}</p>
             </div>
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#7d8790]">Account</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#71717a]">Account</p>
               <p className="mt-1 truncate text-base font-bold">{accountName}</p>
               <button
                 onClick={handleSignOut}
-                className="mt-2 rounded-md border border-[#d9d2c3] px-3 py-1.5 text-sm font-bold transition hover:border-[#1f2933]"
+                className="mt-2 rounded-md border border-[#e5e7eb] px-3 py-1.5 text-sm font-bold transition hover:border-[#0a0a0a]"
               >
                 Sign out
               </button>
@@ -811,14 +811,14 @@ export default function Home() {
 
       <section className="mx-auto grid max-w-7xl gap-5 px-5 py-6 lg:grid-cols-[1.1fr_1.6fr_0.95fr]">
         <aside className="space-y-4">
-          <div className="rounded-lg border border-[#d9d2c3] bg-white p-4 shadow-sm">
+          <div className="rounded-lg border border-[#e5e7eb] bg-white p-4 shadow-sm">
             <h2 className="text-lg font-bold">Markets</h2>
             {assets.length ? null : (
-              <p className="mt-4 rounded-md bg-[#faf7ef] px-3 py-3 text-sm text-[#606b76]">No markets.</p>
+              <p className="mt-4 rounded-md bg-[#fefce8] px-3 py-3 text-sm text-[#52525b]">No markets.</p>
             )}
           </div>
 
-          <form onSubmit={createMarket} className="rounded-lg border border-[#d9d2c3] bg-white p-4 shadow-sm">
+          <form onSubmit={createMarket} className="rounded-lg border border-[#e5e7eb] bg-white p-4 shadow-sm">
             <h2 className="text-lg font-bold">Create Market</h2>
             <div className="mt-4 grid gap-3">
               <label className="text-sm font-semibold">
@@ -826,7 +826,7 @@ export default function Home() {
                 <input
                   value={marketName}
                   onChange={(event) => setMarketName(event.target.value)}
-                  className="mt-2 w-full rounded-md border border-[#d9d2c3] px-3 py-2 outline-none focus:border-[#1f2933]"
+                  className="mt-2 w-full rounded-md border border-[#e5e7eb] px-3 py-2 outline-none focus:border-[#0a0a0a]"
                 />
               </label>
               <label className="text-sm font-semibold">
@@ -834,7 +834,7 @@ export default function Home() {
                 <input
                   value={marketCategory}
                   onChange={(event) => setMarketCategory(event.target.value)}
-                  className="mt-2 w-full rounded-md border border-[#d9d2c3] px-3 py-2 outline-none focus:border-[#1f2933]"
+                  className="mt-2 w-full rounded-md border border-[#e5e7eb] px-3 py-2 outline-none focus:border-[#0a0a0a]"
                 />
               </label>
               <label className="text-sm font-semibold">
@@ -842,7 +842,7 @@ export default function Home() {
                 <select
                   value={marketLevel}
                   onChange={(event) => setMarketLevel(event.target.value as MarketLevel)}
-                  className="mt-2 w-full rounded-md border border-[#d9d2c3] bg-white px-3 py-2 outline-none focus:border-[#1f2933]"
+                  className="mt-2 w-full rounded-md border border-[#e5e7eb] bg-white px-3 py-2 outline-none focus:border-[#0a0a0a]"
                 >
                   {(Object.keys(levelCopy) as MarketLevel[]).map((level) => (
                     <option key={level} value={level}>
@@ -859,7 +859,7 @@ export default function Home() {
                     onChange={(event) => setMarketPrice(Number(event.target.value))}
                     min={1}
                     type="number"
-                    className="mt-2 w-full rounded-md border border-[#d9d2c3] px-3 py-2 outline-none focus:border-[#1f2933]"
+                    className="mt-2 w-full rounded-md border border-[#e5e7eb] px-3 py-2 outline-none focus:border-[#0a0a0a]"
                   />
                 </label>
                 <label className="text-sm font-semibold">
@@ -868,12 +868,12 @@ export default function Home() {
                     value={marketColor}
                     onChange={(event) => setMarketColor(event.target.value)}
                     type="color"
-                    className="mt-2 h-10 w-12 rounded-md border border-[#d9d2c3] bg-white p-1"
+                    className="mt-2 h-10 w-12 rounded-md border border-[#e5e7eb] bg-white p-1"
                   />
                 </label>
               </div>
             </div>
-            <button className="mt-4 w-full rounded-md bg-[#1f2933] px-4 py-3 font-bold text-white transition hover:bg-[#354353]">
+            <button className="mt-4 w-full rounded-md bg-[#0a0a0a] px-4 py-3 font-bold text-white transition hover:bg-[#18181b]">
               Create
             </button>
           </form>
@@ -895,7 +895,7 @@ export default function Home() {
                       setLimitPrice(asset.lastPrice);
                     }}
                     className={`rounded-lg border bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
-                      selectedAsset?.id === asset.id ? "border-[#1f2933]" : "border-[#d9d2c3]"
+                      selectedAsset?.id === asset.id ? "border-[#0a0a0a]" : "border-[#e5e7eb]"
                     }`}
                   >
                     <div className="flex items-start justify-between gap-3">
@@ -903,19 +903,19 @@ export default function Home() {
                         <span className="h-10 w-10 rounded-md" style={{ background: asset.color }} />
                         <div>
                           <p className="font-bold">{asset.name}</p>
-                          <p className="text-sm text-[#606b76]">{asset.category}</p>
+                          <p className="text-sm text-[#52525b]">{asset.category}</p>
                         </div>
                       </div>
-                      <span className="rounded-full bg-[#f1eadc] px-2 py-1 text-xs font-bold text-[#7a552d]">
+                      <span className="rounded-full bg-[#fef08a] px-2 py-1 text-xs font-bold text-[#713f12]">
                         {levelCopy[asset.level].badge}
                       </span>
                     </div>
                     <div className="mt-4 flex items-end justify-between gap-3">
                       <div>
-                        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#7d8790]">Last price</p>
+                        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#71717a]">Last price</p>
                         <p className="text-2xl font-bold">{asset.lastPrice}</p>
                       </div>
-                      <p className={`font-bold ${assetChange >= 0 ? "text-[#0f766e]" : "text-[#b42318]"}`}>
+                      <p className={`font-bold ${assetChange >= 0 ? "text-[#0a0a0a]" : "text-[#dc2626]"}`}>
                         {formatPercent(assetChange)}
                       </p>
                     </div>
@@ -925,46 +925,46 @@ export default function Home() {
             </div>
           ) : null}
 
-          <div className="rounded-lg border border-[#d9d2c3] bg-white p-5 shadow-sm">
+          <div className="rounded-lg border border-[#e5e7eb] bg-white p-5 shadow-sm">
             {selectedAsset ? (
               <>
-              <div className="flex flex-col gap-4 border-b border-[#e7dfd0] pb-5 md:flex-row md:items-start md:justify-between">
+              <div className="flex flex-col gap-4 border-b border-[#e5e7eb] pb-5 md:flex-row md:items-start md:justify-between">
               <div>
                 <div className="flex flex-wrap items-center gap-2">
                   <h2 className="text-3xl font-bold">{selectedAsset.name}</h2>
-                  <span className="rounded-full bg-[#edf7f4] px-2 py-1 text-xs font-bold text-[#0f766e]">
+                  <span className="rounded-full bg-[#fef9c3] px-2 py-1 text-xs font-bold text-[#0a0a0a]">
                     {levelCopy[selectedAsset.level].label}
                   </span>
                 </div>
               </div>
               <div className="grid grid-cols-3 gap-3 text-right">
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#7d8790]">Price</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#71717a]">Price</p>
                   <p className="text-2xl font-bold">{selectedAsset.lastPrice}</p>
                 </div>
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#7d8790]">Move</p>
-                  <p className={`text-2xl font-bold ${change >= 0 ? "text-[#0f766e]" : "text-[#b42318]"}`}>
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#71717a]">Move</p>
+                  <p className={`text-2xl font-bold ${change >= 0 ? "text-[#0a0a0a]" : "text-[#dc2626]"}`}>
                     {formatPercent(change)}
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#7d8790]">Vol</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#71717a]">Vol</p>
                   <p className="text-2xl font-bold">{selectedAsset.volatility.toFixed(2)}x</p>
                 </div>
               </div>
             </div>
 
             <div className="mt-5 grid gap-5 lg:grid-cols-[1fr_1fr]">
-              <form onSubmit={placeOrder} className="rounded-md border border-[#e7dfd0] p-4">
-                <div className="flex rounded-md bg-[#f1eadc] p-1">
+              <form onSubmit={placeOrder} className="rounded-md border border-[#e5e7eb] p-4">
+                <div className="flex rounded-md bg-[#fef08a] p-1">
                   {(["buy", "sell"] as Side[]).map((option) => (
                     <button
                       key={option}
                       type="button"
                       onClick={() => setSide(option)}
                       className={`flex-1 rounded px-3 py-2 text-sm font-bold capitalize transition ${
-                        side === option ? "bg-white shadow-sm" : "text-[#66717c]"
+                        side === option ? "bg-white shadow-sm" : "text-[#71717a]"
                       }`}
                     >
                       {option}
@@ -980,7 +980,7 @@ export default function Home() {
                       onChange={(event) => setQuantity(Number(event.target.value))}
                       min={1}
                       type="number"
-                      className="mt-2 w-full rounded-md border border-[#d9d2c3] px-3 py-3 text-base outline-none focus:border-[#1f2933]"
+                      className="mt-2 w-full rounded-md border border-[#e5e7eb] px-3 py-3 text-base outline-none focus:border-[#0a0a0a]"
                     />
                   </label>
                   <label className="text-sm font-semibold">
@@ -990,35 +990,35 @@ export default function Home() {
                       onChange={(event) => setLimitPrice(Number(event.target.value))}
                       min={1}
                       type="number"
-                      className="mt-2 w-full rounded-md border border-[#d9d2c3] px-3 py-3 text-base outline-none focus:border-[#1f2933]"
+                      className="mt-2 w-full rounded-md border border-[#e5e7eb] px-3 py-3 text-base outline-none focus:border-[#0a0a0a]"
                     />
                   </label>
                 </div>
 
-                <div className="mt-4 rounded-md bg-[#faf7ef] p-3 text-sm leading-6 text-[#606b76]">
+                <div className="mt-4 rounded-md bg-[#fefce8] p-3 text-sm leading-6 text-[#52525b]">
                   <p>Best bid: {bestBid ? currency(bestBid) : "none"}</p>
                   <p>Best ask: {bestAsk ? currency(bestAsk) : "none"}</p>
                   <p>Estimated max value: {currency(quantity * limitPrice)}</p>
                   <p>Your shares: {selectedHolding.quantity}</p>
                 </div>
 
-                <button className="mt-4 w-full rounded-md bg-[#1f2933] px-4 py-3 font-bold text-white transition hover:bg-[#354353]">
+                <button className="mt-4 w-full rounded-md bg-[#0a0a0a] px-4 py-3 font-bold text-white transition hover:bg-[#18181b]">
                   Place {side} order
                 </button>
-                <p className="mt-3 min-h-12 rounded-md bg-[#edf7f4] p-3 text-sm font-semibold leading-6 text-[#0f5f59]">
+                <p className="mt-3 min-h-12 rounded-md bg-[#fef9c3] p-3 text-sm font-semibold leading-6 text-[#713f12]">
                   {notice}
                 </p>
               </form>
 
               <div className="grid gap-4">
-                <div className="rounded-md border border-[#e7dfd0] p-4">
+                <div className="rounded-md border border-[#e5e7eb] p-4">
                   <h3 className="font-bold">Order Book</h3>
                   <div className="mt-3 grid grid-cols-2 gap-3">
                     <div>
-                      <p className="text-xs font-bold uppercase tracking-[0.12em] text-[#0f766e]">Bids</p>
+                      <p className="text-xs font-bold uppercase tracking-[0.12em] text-[#0a0a0a]">Bids</p>
                       <div className="mt-2 space-y-2">
                         {buyOrders.slice(0, 5).map((order) => (
-                          <div key={order.id} className="flex justify-between rounded bg-[#edf7f4] px-3 py-2 text-sm">
+                          <div key={order.id} className="flex justify-between rounded bg-[#fef9c3] px-3 py-2 text-sm">
                             <span>{order.limitPrice}</span>
                             <span>{order.remaining}</span>
                           </div>
@@ -1026,10 +1026,10 @@ export default function Home() {
                       </div>
                     </div>
                     <div>
-                      <p className="text-xs font-bold uppercase tracking-[0.12em] text-[#b42318]">Asks</p>
+                      <p className="text-xs font-bold uppercase tracking-[0.12em] text-[#dc2626]">Asks</p>
                       <div className="mt-2 space-y-2">
                         {sellOrders.slice(0, 5).map((order) => (
-                          <div key={order.id} className="flex justify-between rounded bg-[#fff1ee] px-3 py-2 text-sm">
+                          <div key={order.id} className="flex justify-between rounded bg-[#fef2f2] px-3 py-2 text-sm">
                             <span>{order.limitPrice}</span>
                             <span>{order.remaining}</span>
                           </div>
@@ -1039,19 +1039,19 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div className="rounded-md border border-[#e7dfd0] p-4">
+                <div className="rounded-md border border-[#e5e7eb] p-4">
                   <h3 className="font-bold">Recent Trades</h3>
                   <div className="mt-3 space-y-2">
                     {assetTrades.length ? (
                       assetTrades.map((trade) => (
-                        <div key={trade.id} className="flex items-center justify-between rounded bg-[#faf7ef] px-3 py-2 text-sm">
+                        <div key={trade.id} className="flex items-center justify-between rounded bg-[#fefce8] px-3 py-2 text-sm">
                           <span>{trade.quantity} shares</span>
                           <span className="font-bold">{trade.price}</span>
-                          <span className="text-[#606b76]">{trade.buyer} bought</span>
+                          <span className="text-[#52525b]">{trade.buyer} bought</span>
                         </div>
                       ))
                     ) : (
-                      <p className="rounded bg-[#faf7ef] px-3 py-3 text-sm text-[#606b76]">
+                      <p className="rounded bg-[#fefce8] px-3 py-3 text-sm text-[#52525b]">
                         No trades yet.
                       </p>
                     )}
@@ -1061,13 +1061,13 @@ export default function Home() {
             </div>
               </>
             ) : (
-              <p className="rounded-md bg-[#faf7ef] px-3 py-3 text-sm text-[#606b76]">No market selected.</p>
+              <p className="rounded-md bg-[#fefce8] px-3 py-3 text-sm text-[#52525b]">No market selected.</p>
             )}
           </div>
         </section>
 
         <aside className="space-y-4">
-          <div className="rounded-lg border border-[#d9d2c3] bg-white p-4 shadow-sm">
+          <div className="rounded-lg border border-[#e5e7eb] bg-white p-4 shadow-sm">
             <h2 className="text-lg font-bold">Portfolio</h2>
             <div className="mt-4 space-y-3">
               {assets.length ? assets.map((asset) => {
@@ -1075,13 +1075,13 @@ export default function Home() {
                 const profit = holding.quantity * (asset.lastPrice - holding.averagePrice);
 
                 return (
-                  <div key={asset.id} className="rounded-md border border-[#e7dfd0] p-3">
+                  <div key={asset.id} className="rounded-md border border-[#e5e7eb] p-3">
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="font-semibold">{asset.name}</p>
-                        <p className="text-sm text-[#606b76]">{holding.quantity} shares at avg {holding.averagePrice.toFixed(0)}</p>
+                        <p className="text-sm text-[#52525b]">{holding.quantity} shares at avg {holding.averagePrice.toFixed(0)}</p>
                       </div>
-                      <p className={`font-bold ${profit >= 0 ? "text-[#0f766e]" : "text-[#b42318]"}`}>
+                      <p className={`font-bold ${profit >= 0 ? "text-[#0a0a0a]" : "text-[#dc2626]"}`}>
                         {profit >= 0 ? "+" : ""}
                         {profit.toFixed(0)}
                       </p>
@@ -1089,7 +1089,7 @@ export default function Home() {
                   </div>
                 );
               }) : (
-                <p className="rounded-md bg-[#faf7ef] px-3 py-3 text-sm text-[#606b76]">No holdings.</p>
+                <p className="rounded-md bg-[#fefce8] px-3 py-3 text-sm text-[#52525b]">No holdings.</p>
               )}
             </div>
           </div>
@@ -1098,3 +1098,4 @@ export default function Home() {
     </main>
   );
 }
+
