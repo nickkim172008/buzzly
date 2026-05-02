@@ -203,11 +203,24 @@ service cloud.firestore {
         && request.resource.data.voters[request.auth.uid] == true;
 
       allow update: if request.auth != null
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        && request.resource.data.keys().hasOnly([
+          "name",
+          "category",
+          "reason",
+          "suggestedBy",
+          "suggestedByName",
           "upvotes",
           "voters",
+          "createdAt",
           "updatedAt"
         ])
+        && request.resource.data.name == resource.data.name
+        && request.resource.data.category == resource.data.category
+        && request.resource.data.reason == resource.data.reason
+        && request.resource.data.suggestedBy == resource.data.suggestedBy
+        && request.resource.data.suggestedByName == resource.data.suggestedByName
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.voters is map
         && resource.data.voters[request.auth.uid] != true
         && request.resource.data.voters[request.auth.uid] == true
         && request.resource.data.upvotes == resource.data.upvotes + 1;

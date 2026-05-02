@@ -760,23 +760,27 @@ export default function Home() {
       return;
     }
 
-    await addDoc(collection(db, "suggestions"), {
-      name: cleanName,
-      category: cleanCategory,
-      reason: cleanReason,
-      suggestedBy: authUser.uid,
-      suggestedByName: accountName,
-      upvotes: 1,
-      voters: { [authUser.uid]: true },
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
+    try {
+      await addDoc(collection(db, "suggestions"), {
+        name: cleanName,
+        category: cleanCategory,
+        reason: cleanReason,
+        suggestedBy: authUser.uid,
+        suggestedByName: accountName,
+        upvotes: 1,
+        voters: { [authUser.uid]: true },
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
 
-    setSuggestionName("");
-    setSuggestionCategory("Event");
-    setSuggestionReason("");
-    setActiveTab("survey");
-    setNotice("Suggestion added to the survey.");
+      setSuggestionName("");
+      setSuggestionCategory("Event");
+      setSuggestionReason("");
+      setActiveTab("survey");
+      setNotice("Suggestion added to the survey.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Suggestion failed.");
+    }
   }
 
   async function upvoteSuggestion(suggestion: Suggestion) {
@@ -797,17 +801,32 @@ export default function Home() {
       return;
     }
 
-    await setDoc(
-      doc(db, "suggestions", suggestion.id),
-      {
-        upvotes: suggestion.upvotes + 1,
-        voters: { ...suggestion.voters, [authUser.uid]: true },
-        updatedAt: serverTimestamp(),
-      },
-      { merge: true },
-    );
+    try {
+      await setDoc(
+        doc(db, "suggestions", suggestion.id),
+        {
+          upvotes: suggestion.upvotes + 1,
+          voters: { ...suggestion.voters, [authUser.uid]: true },
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true },
+      );
 
-    setNotice(`Upvoted ${suggestion.name}.`);
+      setSuggestions((current) =>
+        current.map((item) =>
+          item.id === suggestion.id
+            ? {
+                ...item,
+                upvotes: item.upvotes + 1,
+                voters: { ...item.voters, [authUser.uid]: true },
+              }
+            : item,
+        ),
+      );
+      setNotice(`Upvoted ${suggestion.name}.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Upvote failed.");
+    }
   }
 
   async function buyFromDrop(event: FormEvent<HTMLFormElement>) {
