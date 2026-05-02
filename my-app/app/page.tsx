@@ -5,6 +5,7 @@ import { onAuthStateChanged, signInWithPopup, signOut, type User } from "firebas
 import {
   addDoc,
   collection,
+  deleteDoc,
   doc,
   getDocs,
   onSnapshot,
@@ -775,6 +776,30 @@ export default function Home() {
     setNotice("Market deleted.");
   }
 
+  async function cancelOrder(orderId: string) {
+    if (!authUser) {
+      setNotice("Sign in required.");
+      return;
+    }
+
+    const order = orders.find((item) => item.id === orderId);
+
+    if (!order || order.userId !== authUser.uid) {
+      setNotice("You can only cancel your own orders.");
+      return;
+    }
+
+    const db = getFirebaseDb();
+
+    if (!db) {
+      setNotice("Database unavailable.");
+      return;
+    }
+
+    await deleteDoc(doc(db, "orders", orderId));
+    setNotice("Order cancelled.");
+  }
+
   const selectedAsset = assets.find((asset) => asset.id === selectedAssetId);
   const selectedAssetOrderId = selectedAsset?.id ?? "";
   const buyOrders = selectedAsset ? getOrderBook(orders, selectedAssetOrderId, "buy") : [];
@@ -1414,9 +1439,17 @@ export default function Home() {
                       </div>
                       <div className="mt-1 space-y-2">
                         {buyOrders.map((order) => (
-                          <div key={order.id} className="flex justify-between rounded bg-[#fef9c3] px-3 py-2 text-sm">
+                          <div key={order.id} className="grid grid-cols-[1fr_1fr_auto] items-center gap-2 rounded bg-[#fef9c3] px-3 py-2 text-sm">
                             <span>{order.limitPrice}</span>
-                            <span>{order.remaining}</span>
+                            <span className="text-right">{order.remaining}</span>
+                            {authUser?.uid === order.userId ? (
+                              <button
+                                onClick={() => void cancelOrder(order.id)}
+                                className="rounded border border-[#e5e7eb] px-2 py-1 text-xs font-bold text-[#dc2626] hover:border-[#dc2626]"
+                              >
+                                Cancel
+                              </button>
+                            ) : null}
                           </div>
                         ))}
                       </div>
@@ -1429,9 +1462,17 @@ export default function Home() {
                       </div>
                       <div className="mt-1 space-y-2">
                         {sellOrders.map((order) => (
-                          <div key={order.id} className="flex justify-between rounded bg-[#fef2f2] px-3 py-2 text-sm">
+                          <div key={order.id} className="grid grid-cols-[1fr_1fr_auto] items-center gap-2 rounded bg-[#fef2f2] px-3 py-2 text-sm">
                             <span>{order.limitPrice}</span>
-                            <span>{order.remaining}</span>
+                            <span className="text-right">{order.remaining}</span>
+                            {authUser?.uid === order.userId ? (
+                              <button
+                                onClick={() => void cancelOrder(order.id)}
+                                className="rounded border border-[#e5e7eb] px-2 py-1 text-xs font-bold text-[#dc2626] hover:border-[#dc2626]"
+                              >
+                                Cancel
+                              </button>
+                            ) : null}
                           </div>
                         ))}
                       </div>
