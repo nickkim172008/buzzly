@@ -432,7 +432,7 @@ export default function Home() {
   }, [authUser]);
 
   useEffect(() => {
-    if (process.env.NODE_ENV !== "development" || !authUser) {
+    if (!authUser) {
       return;
     }
 
