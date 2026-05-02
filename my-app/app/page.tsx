@@ -242,6 +242,7 @@ export default function Home() {
   const [holdings, setHoldings] = useState<Record<string, Holding>>({});
   const [publicBalances, setPublicBalances] = useState<Record<string, PublicBalance>>({});
   const [publicHoldings, setPublicHoldings] = useState<Record<string, Holding>>({});
+  const [savedUserCoins, setSavedUserCoins] = useState<number | null>(null);
   const [selectedAssetId, setSelectedAssetId] = useState("");
   const [side, setSide] = useState<Side>("buy");
   const [quantity, setQuantity] = useState(1);
@@ -268,6 +269,7 @@ export default function Home() {
     return onAuthStateChanged(auth, (user) => {
       setAuthUser(user);
       setCoinsReady(false);
+      setSavedUserCoins(null);
       setAuthReady(true);
     });
   }, []);
@@ -306,7 +308,7 @@ export default function Home() {
         }
 
         const savedCoins = snapshot.data().coins;
-        setCoins(typeof savedCoins === "number" ? savedCoins : STARTING_COINS);
+        setSavedUserCoins(typeof savedCoins === "number" ? savedCoins : STARTING_COINS);
         setCoinsReady(true);
       },
       (error) => {
@@ -445,6 +447,15 @@ export default function Home() {
         if (currentBalance) {
           setCoins(currentBalance.coins);
           setCoinsReady(true);
+        } else if (savedUserCoins !== null) {
+          setDoc(doc(db, "balances", authUser.uid), {
+            coins: savedUserCoins,
+            displayName: authUser.displayName ?? "",
+            email: authUser.email ?? "",
+            updatedAt: serverTimestamp(),
+          });
+          setCoins(savedUserCoins);
+          setCoinsReady(true);
         }
       },
       (error) => setNotice(error.message),
@@ -479,7 +490,7 @@ export default function Home() {
       unsubscribeBalances();
       unsubscribePublicHoldings();
     };
-  }, [authUser]);
+  }, [authUser, savedUserCoins]);
 
   const saveCoins = useCallback(async (nextCoins: number) => {
     if (!authUser) {
@@ -1016,8 +1027,7 @@ export default function Home() {
         nextCoins += refund;
         getAccount(authUser.uid, accountName).coins = nextCoins;
         getAccount(match.userId, match.user).coins += total;
-        const sellerHolding = getHolding(match.userId);
-        sellerHolding.quantity = Math.max(0, sellerHolding.quantity - tradeQuantity);
+        getHolding(match.userId);
         nextHoldings[tradeAssetId] = applyTradeToHolding(nextHoldings[tradeAssetId], tradeQuantity, tradePrice);
         const buyerHolding = getHolding(authUser.uid);
         buyerHolding.quantity = nextHoldings[tradeAssetId].quantity;
@@ -1739,5 +1749,3 @@ export default function Home() {
     </main>
   );
 }
-
-
