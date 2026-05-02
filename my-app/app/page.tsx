@@ -145,6 +145,25 @@ function formatPercent(value: number) {
   return `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`;
 }
 
+function formatVolatility(value: number) {
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+function calculateVolatility(prices: number[]) {
+  const cleanPrices = prices.filter((price) => price > 0).slice(-20);
+
+  if (cleanPrices.length < 2) {
+    return 0;
+  }
+
+  const returns = cleanPrices.slice(1).map((price, index) => price / cleanPrices[index] - 1);
+  const mean = returns.reduce((sum, value) => sum + value, 0) / returns.length;
+  const variance =
+    returns.reduce((sum, value) => sum + (value - mean) ** 2, 0) / returns.length;
+
+  return Math.sqrt(variance);
+}
+
 function getOrderBook(orders: Order[], assetId: string, side: Side) {
   return orders
     .filter((order) => order.assetId === assetId && order.side === side && order.remaining > 0)
@@ -340,7 +359,7 @@ export default function Home() {
             name: typeof data.name === "string" ? data.name : "",
             category: typeof data.category === "string" ? data.category : "",
             level: ["admin", "community", "private"].includes(data.level) ? data.level : "community",
-            volatility: typeof data.volatility === "number" ? data.volatility : 1,
+            volatility: typeof data.volatility === "number" ? data.volatility : 0,
             lastPrice: typeof data.lastPrice === "number" ? data.lastPrice : 1,
             previousPrice: typeof data.previousPrice === "number" ? data.previousPrice : 1,
             volume: typeof data.volume === "number" ? data.volume : 0,
@@ -641,7 +660,7 @@ export default function Home() {
         name: cleanName,
         category: cleanCategory,
         level: marketLevel,
-        volatility: 1,
+        volatility: 0,
         lastPrice: cleanPrice,
         previousPrice: cleanPrice,
         volume: 0,
@@ -1100,6 +1119,16 @@ export default function Home() {
     }
 
     const latestTrade = nextTrades.at(-1);
+    const nextVolume = selectedAsset.volume + nextTrades.reduce((sum, trade) => sum + trade.price * trade.quantity, 0);
+    const nextVolatility = latestTrade
+      ? calculateVolatility([
+          ...trades
+            .filter((trade) => trade.assetId === tradeAssetId)
+            .map((trade) => trade.price)
+            .reverse(),
+          ...nextTrades.map((trade) => trade.price),
+        ])
+      : selectedAsset.volatility;
 
     const db = getFirebaseDb();
 
@@ -1196,7 +1225,8 @@ export default function Home() {
         batch.update(doc(db, "markets", tradeAssetId), {
           previousPrice: selectedAsset.lastPrice,
           lastPrice: latestTrade.price,
-          volume: selectedAsset.volume + nextTrades.reduce((sum, trade) => sum + trade.price * trade.quantity, 0),
+          volume: nextVolume,
+          volatility: nextVolatility,
           updatedAt: serverTimestamp(),
         });
       }
@@ -1216,7 +1246,8 @@ export default function Home() {
               ...asset,
               previousPrice: asset.lastPrice,
               lastPrice: latestTrade.price,
-              volume: asset.volume + nextTrades.reduce((sum, trade) => sum + trade.price * trade.quantity, 0),
+              volume: nextVolume,
+              volatility: nextVolatility,
             }
           : asset,
       ),
@@ -1499,7 +1530,7 @@ export default function Home() {
                 </div>
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#71717a]">Vol</p>
-                  <p className="text-2xl font-bold">{visibleAsset.volatility.toFixed(2)}x</p>
+                  <p className="text-2xl font-bold">{formatVolatility(visibleAsset.volatility)}</p>
                 </div>
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#71717a]">Supply</p>
